@@ -54,7 +54,7 @@ export async function getAllPlayers() {
   return players.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 
-export async function createPlayer(name) {
+export async function createPlayer(name, profile = {}) {
   const trimmed = (name || '').trim();
   if (!trimmed) throw new Error('Player name is required');
   const players = loadPlayers();
@@ -65,9 +65,40 @@ export async function createPlayer(name) {
   }
   const id = players.length ? Math.max(...players.map((p) => p.id)) + 1 : 1;
   const created_at = new Date().toISOString();
-  players.push({ id, name: trimmed, created_at });
+  players.push({
+    id,
+    name: trimmed,
+    created_at,
+    profile_image: profile.profileImage || null,
+    description: (profile.description || '').trim() || null,
+    start_date: (profile.startDate || '').trim() || null,
+    racket_level: (profile.racketLevel || '').trim() || null,
+  });
   savePlayers(players);
   return id;
+}
+
+export async function updatePlayer(id, updates = {}) {
+  const players = loadPlayers();
+  const player = players.find((p) => p.id === id);
+  if (!player) return;
+
+  if (updates.name !== undefined) {
+    const trimmed = (updates.name || '').trim();
+    if (!trimmed) throw new Error('Player name is required');
+    const duplicate = players.find((p) => p.id !== id && (p.name || '').toLowerCase() === trimmed.toLowerCase());
+    if (duplicate) {
+      const e = new Error('UNIQUE constraint failed');
+      e.message = 'UNIQUE constraint failed';
+      throw e;
+    }
+    player.name = trimmed;
+  }
+  if (updates.profileImage !== undefined) player.profile_image = updates.profileImage || null;
+  if (updates.description !== undefined) player.description = (updates.description || '').trim() || null;
+  if (updates.startDate !== undefined) player.start_date = (updates.startDate || '').trim() || null;
+  if (updates.racketLevel !== undefined) player.racket_level = (updates.racketLevel || '').trim() || null;
+  savePlayers(players);
 }
 
 export async function getPlayerById(id) {
@@ -193,23 +224,44 @@ export async function getMatchResult(matchId) {
 
 export async function getPlayerStats(playerId) {
   const matches = await getMatchesForPlayer(playerId);
-  let wins = 0, totalGamesWon = 0, totalSetsWon = 0;
+  let wins = 0;
+  let recordedMatches = 0;
+  let totalGamesWon = 0;
+  let totalSetsWon = 0;
+  let totalSetsPlayed = 0;
+  let totalGamesPlayed = 0;
+  const opponentCounts = {};
   for (const match of matches) {
     const result = await getMatchResult(match.id);
     if (!result) continue;
+    recordedMatches++;
     const isPlayer1 = match.player1_id === playerId;
     if (result.winnerId === playerId) wins++;
     totalGamesWon += isPlayer1 ? result.gamesPlayer1 : result.gamesPlayer2;
     totalSetsWon += isPlayer1 ? result.setsPlayer1 : result.setsPlayer2;
+    totalSetsPlayed += result.setsPlayer1 + result.setsPlayer2;
+    totalGamesPlayed += result.gamesPlayer1 + result.gamesPlayer2;
+    const opponentId = isPlayer1 ? match.player2_id : match.player1_id;
+    const opponentName = isPlayer1 ? match.player2_name : match.player1_name;
+    if (!opponentCounts[opponentId]) {
+      opponentCounts[opponentId] = { playerId: opponentId, name: opponentName, matches: 0 };
+    }
+    opponentCounts[opponentId].matches += 1;
   }
-  const losses = matches.length - wins;
-  const winPercentage = matches.length > 0 ? (wins / matches.length) * 100 : 0;
+  const mostPlayedWith = Object.values(opponentCounts).sort((a, b) => b.matches - a.matches)[0] || null;
+  const losses = recordedMatches - wins;
+  const winPercentage = recordedMatches > 0 ? (wins / recordedMatches) * 100 : 0;
   return {
     matchesPlayed: matches.length,
+    recordedMatches,
     wins,
     losses,
     totalGamesWon,
     totalSetsWon,
+    totalSetsPlayed,
+    totalGamesPlayed,
+    totalUniquePlayers: Object.keys(opponentCounts).length,
+    mostPlayedWith,
     winPercentage,
   };
 }

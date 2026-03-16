@@ -1,34 +1,49 @@
 import React from 'react';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Text } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet } from 'react-native';
 
 import HomeScreen from '../screens/HomeScreen';
 import MatchDetailScreen from '../screens/MatchDetailScreen';
-import PlayersScreen from '../screens/PlayersScreen';
+import MatchupStatsScreen from '../screens/MatchupStatsScreen';
 import PlayerDetailScreen from '../screens/PlayerDetailScreen';
-import StatsScreen from '../screens/StatsScreen';
 
-const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-function HomeStack() {
+function HomeButton({ navigation }) {
   return (
-    <Stack.Navigator screenOptions={{ headerLargeTitle: false }}>
-      <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Home' }} />
-      <Stack.Screen
-        name="MatchDetail"
-        component={MatchDetailScreen}
-        options={{ title: 'Match details' }}
-      />
-    </Stack.Navigator>
+    <TouchableOpacity
+      onPress={() => navigation.navigate('Home')}
+      style={styles.homeBtn}
+      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+    >
+      <Text style={styles.homeBtnText}>🏠 Home</Text>
+    </TouchableOpacity>
   );
 }
 
-function PlayersStack() {
+export default function AppNavigator() {
   return (
-    <Stack.Navigator screenOptions={{ headerLargeTitle: true }}>
-      <Stack.Screen name="PlayersList" component={PlayersScreen} options={{ title: 'Players' }} />
+    <Stack.Navigator
+      screenOptions={({ navigation, route }) => ({
+        headerLargeTitle: false,
+        headerLeft: route.name === 'Home' ? undefined : () => <HomeButton navigation={navigation} />,
+      })}
+    >
+      <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Tennis Score' }} />
+      <Stack.Screen
+        name="MatchupStats"
+        component={MatchupStatsScreen}
+        options={({ route }) => ({
+          title: route.params?.player1Name && route.params?.player2Name
+            ? `${route.params.player1Name} vs ${route.params.player2Name}`
+            : 'Matchup stats',
+        })}
+      />
+      <Stack.Screen
+        name="MatchDetail"
+        component={MatchDetailScreen}
+        options={{ title: 'Edit match' }}
+      />
       <Stack.Screen
         name="PlayerDetail"
         component={PlayerDetailScreen}
@@ -38,26 +53,7 @@ function PlayersStack() {
   );
 }
 
-function TabIcon({ name, focused }) {
-  const icons = { Home: '🏠', Players: '👤', Stats: '📊' };
-  return <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.6 }}>{icons[name] || '•'}</Text>;
-}
-
-export default function AppNavigator() {
-  return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        tabBarIcon: ({ focused }) => <TabIcon name={route.name} focused={focused} />,
-        headerShown: route.name !== 'Players',
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeStack} options={{ headerShown: false }} />
-      <Tab.Screen name="Players" component={PlayersStack} options={{ headerShown: false }} />
-      <Tab.Screen
-        name="Stats"
-        component={StatsScreen}
-        options={{ title: 'Statistics', headerLargeTitle: false }}
-      />
-    </Tab.Navigator>
-  );
-}
+const styles = StyleSheet.create({
+  homeBtn: { paddingLeft: 4, paddingVertical: 8, paddingRight: 12 },
+  homeBtnText: { fontSize: 16, color: '#1a472a', fontWeight: '600' },
+});

@@ -13,7 +13,8 @@
       "package": "com.tennis.scorekeeper"
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      "expo-sqlite"
     ]
   }
 }

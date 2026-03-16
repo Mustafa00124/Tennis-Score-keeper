@@ -7,6 +7,10 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
+    profile_image TEXT,
+    description TEXT,
+    start_date TEXT,
+    racket_level TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -42,6 +46,18 @@ export async function getDb() {
   db = await SQLite.openDatabaseAsync(DB_NAME);
   await db.execAsync(SCHEMA);
   try {
+    await db.execAsync('ALTER TABLE players ADD COLUMN profile_image TEXT');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE players ADD COLUMN description TEXT');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE players ADD COLUMN start_date TEXT');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE players ADD COLUMN racket_level TEXT');
+  } catch (_) {}
+  try {
     await db.execAsync('ALTER TABLE matches ADD COLUMN remarks TEXT');
   } catch (_) {}
   try {
@@ -56,15 +72,52 @@ export async function getAllPlayers() {
   return rows;
 }
 
-export async function createPlayer(name) {
+export async function createPlayer(name, profile = {}) {
   const database = await getDb();
   const trimmed = (name || '').trim();
   if (!trimmed) throw new Error('Player name is required');
+  const description = (profile.description || '').trim() || null;
+  const startDate = (profile.startDate || '').trim() || null;
+  const racketLevel = (profile.racketLevel || '').trim() || null;
+  const profileImage = profile.profileImage || null;
   const result = await database.runAsync(
-    'INSERT INTO players (name) VALUES (?)',
-    trimmed
+    'INSERT INTO players (name, profile_image, description, start_date, racket_level) VALUES (?, ?, ?, ?, ?)',
+    [trimmed, profileImage, description, startDate, racketLevel]
   );
   return result.lastInsertRowId;
+}
+
+export async function updatePlayer(id, updates = {}) {
+  const database = await getDb();
+  const fields = [];
+  const values = [];
+
+  if (updates.name !== undefined) {
+    const trimmed = (updates.name || '').trim();
+    if (!trimmed) throw new Error('Player name is required');
+    fields.push('name = ?');
+    values.push(trimmed);
+  }
+  if (updates.profileImage !== undefined) {
+    fields.push('profile_image = ?');
+    values.push(updates.profileImage || null);
+  }
+  if (updates.description !== undefined) {
+    fields.push('description = ?');
+    values.push((updates.description || '').trim() || null);
+  }
+  if (updates.startDate !== undefined) {
+    fields.push('start_date = ?');
+    values.push((updates.startDate || '').trim() || null);
+  }
+  if (updates.racketLevel !== undefined) {
+    fields.push('racket_level = ?');
+    values.push((updates.racketLevel || '').trim() || null);
+  }
+
+  if (!fields.length) return;
+  values.push(id);
+  await database.runAsync(`UPDATE players SET ${fields.join(', ')} WHERE id = ?`, values);
 }
 
 export async function getPlayerById(id) {
@@ -190,28 +243,47 @@ export async function getMatchResult(matchId) {
 export async function getPlayerStats(playerId) {
   const matches = await getMatchesForPlayer(playerId);
   let wins = 0;
+  let recordedMatches = 0;
   let totalGamesWon = 0;
   let totalSetsWon = 0;
+  let totalSetsPlayed = 0;
+  let totalGamesPlayed = 0;
+  const opponentCounts = {};
 
   for (const match of matches) {
     const result = await getMatchResult(match.id);
     if (!result) continue;
+    recordedMatches++;
     const isPlayer1 = match.player1_id === playerId;
     const won = result.winnerId === playerId;
     if (won) wins++;
     totalGamesWon += isPlayer1 ? result.gamesPlayer1 : result.gamesPlayer2;
     totalSetsWon += isPlayer1 ? result.setsPlayer1 : result.setsPlayer2;
+    totalSetsPlayed += result.setsPlayer1 + result.setsPlayer2;
+    totalGamesPlayed += result.gamesPlayer1 + result.gamesPlayer2;
+    const opponentId = isPlayer1 ? match.player2_id : match.player1_id;
+    const opponentName = isPlayer1 ? match.player2_name : match.player1_name;
+    if (!opponentCounts[opponentId]) {
+      opponentCounts[opponentId] = { playerId: opponentId, name: opponentName, matches: 0 };
+    }
+    opponentCounts[opponentId].matches += 1;
   }
 
-  const losses = matches.length - wins;
-  const winPct = matches.length > 0 ? (wins / matches.length) * 100 : 0;
+  const mostPlayedWith = Object.values(opponentCounts).sort((a, b) => b.matches - a.matches)[0] || null;
+  const losses = recordedMatches - wins;
+  const winPct = recordedMatches > 0 ? (wins / recordedMatches) * 100 : 0;
 
   return {
     matchesPlayed: matches.length,
+    recordedMatches,
     wins,
     losses,
     totalGamesWon,
     totalSetsWon,
+    totalSetsPlayed,
+    totalGamesPlayed,
+    totalUniquePlayers: Object.keys(opponentCounts).length,
+    mostPlayedWith,
     winPercentage: winPct,
   };
 }
