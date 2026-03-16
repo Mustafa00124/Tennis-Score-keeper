@@ -1,6 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet, View, Image } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import HomeScreen from '../screens/HomeScreen';
 import MatchDetailScreen from '../screens/MatchDetailScreen';
@@ -23,6 +24,15 @@ function HomeButton({ navigation }) {
   );
 }
 
+function HeaderTitleWithIcon() {
+  return (
+    <View style={styles.headerTitleWrap}>
+      <Image source={require('../../media/icon.jpg')} style={styles.headerIcon} />
+      <Text style={styles.headerTitleText}>AI Tennis Record Keeper</Text>
+    </View>
+  );
+}
+
 export default function AppNavigator() {
   return (
     <Stack.Navigator
@@ -35,7 +45,14 @@ export default function AppNavigator() {
         name="Home"
         component={HomeScreen}
         options={{
-          title: 'AI Tennis Record Keeper',
+          headerTransparent: true,
+          headerBackground: () => (
+            <LinearGradient
+              colors={['#1a472a', '#0f2d1a']}
+              style={StyleSheet.absoluteFillObject}
+            />
+          ),
+          headerTitle: () => <HeaderTitleWithIcon />,
           headerLeft: () => null,
           headerBackVisible: false,
         }}
@@ -76,4 +93,19 @@ export default function AppNavigator() {
 const styles = StyleSheet.create({
   homeBtn: { paddingLeft: 12, paddingVertical: 8, paddingRight: 4 },
   homeBtnText: { fontSize: 16, color: '#1a472a', fontWeight: '600' },
+  headerTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+  },
+  headerTitleText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#fff',
+  },
 });

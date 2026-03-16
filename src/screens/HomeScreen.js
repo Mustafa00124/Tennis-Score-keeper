@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,8 +11,10 @@ import {
   Platform,
   TextInput,
   ImageBackground,
+  Animated,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   getAllMatches,
   getAllPlayers,
@@ -22,7 +24,10 @@ import {
   getAllTournaments,
 } from '../db/database';
 
+const HEADER_HEIGHT = 56;
+
 export default function HomeScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [matches, setMatches] = useState([]);
   const [players, setPlayers] = useState([]);
   const [tournaments, setTournaments] = useState([]);
@@ -110,6 +115,7 @@ export default function HomeScreen({ navigation }) {
         resizeMode="cover"
       >
         <View style={styles.backgroundOverlay} />
+        <View style={[styles.headerSpacer, { paddingTop: insets.top + HEADER_HEIGHT }]}>
         {/* Floating pill tab bar */}
         <View style={styles.tabBarWrap}>
           <View style={styles.tabBar}>
@@ -219,6 +225,7 @@ export default function HomeScreen({ navigation }) {
           )}
         </ScrollView>
       </View>
+        </View>
       </ImageBackground>
 
       {/* Add match up modal */}
@@ -313,10 +320,44 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
+function ShiftingGradientOverlay() {
+  const translateX = useRef(new Animated.Value(-200)).current;
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(translateX, {
+          toValue: 400,
+          duration: 5000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(translateX, {
+          toValue: -200,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [translateX]);
+  return (
+    <View style={styles.gradientOverlayWrap} pointerEvents="none">
+      <Animated.View
+        style={[
+          styles.gradientOverlayStrip,
+          { transform: [{ translateX }] },
+        ]}
+      />
+    </View>
+  );
+}
+
 function MatchUpCard({ match, onPress, onAddDay }) {
   const dateLabel = match.date_played || 'No date set';
   return (
     <TouchableOpacity style={styles.matchCard} onPress={onPress} activeOpacity={0.7}>
+      <ShiftingGradientOverlay />
+      <View style={styles.matchCardInner}>
       <View style={styles.matchCardHeader}>
         <Text style={styles.matchCardVs} numberOfLines={2}>
           {match.player1_name} vs {match.player2_name}
@@ -337,6 +378,7 @@ function MatchUpCard({ match, onPress, onAddDay }) {
         <Text style={styles.matchCardRemarks} numberOfLines={1}>{match.remarks}</Text>
       ) : null}
       <Text style={styles.matchCardTap}>Tap for stats</Text>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -347,8 +389,11 @@ function PlayerCard({ player, stats, onPress }) {
     : null;
   return (
     <TouchableOpacity style={styles.playerCard} onPress={onPress} activeOpacity={0.7}>
+      <ShiftingGradientOverlay />
+      <View style={styles.playerCardInner}>
       <Text style={styles.playerCardName} numberOfLines={1}>{player.name}</Text>
       {statLine ? <Text style={styles.playerCardStats} numberOfLines={1}>{statLine}</Text> : null}
+      </View>
     </TouchableOpacity>
   );
 }
@@ -359,10 +404,13 @@ function TournamentCard({ tournament, onPress }) {
   if (tournament.date) metaParts.push(tournament.date);
   return (
     <TouchableOpacity style={[styles.tournamentCard, isComplete && styles.tournamentCardComplete]} onPress={onPress} activeOpacity={0.7}>
+      <ShiftingGradientOverlay />
+      <View style={styles.tournamentCardInner}>
       <Text style={styles.tournamentCardName} numberOfLines={1}>{tournament.name}</Text>
       <Text style={styles.tournamentCardMeta} numberOfLines={1}>
         {metaParts.join(' · ')}
       </Text>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -373,6 +421,9 @@ const styles = StyleSheet.create({
   backgroundOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  headerSpacer: {
+    flex: 1,
   },
   tabBarWrap: {
     paddingHorizontal: 20,
@@ -440,7 +491,6 @@ const styles = StyleSheet.create({
   matchCard: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
-    padding: 14,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.85)',
@@ -451,6 +501,20 @@ const styles = StyleSheet.create({
     elevation: 3,
     overflow: 'hidden',
   },
+  gradientOverlayWrap: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+    borderRadius: 14,
+  },
+  gradientOverlayStrip: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 200,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  matchCardInner: { padding: 14 },
   matchCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 },
   matchCardVs: { fontSize: 14, fontWeight: '700', color: '#1a1a1a', flex: 1 },
   addBtn: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#1a472a' },
@@ -461,7 +525,6 @@ const styles = StyleSheet.create({
   playerCard: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
-    padding: 14,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.85)',
@@ -472,12 +535,12 @@ const styles = StyleSheet.create({
     elevation: 3,
     overflow: 'hidden',
   },
+  playerCardInner: { padding: 14 },
   playerCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
   playerCardStats: { fontSize: 12, color: '#666', marginTop: 4 },
   tournamentCard: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
-    padding: 14,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.85)',
@@ -489,6 +552,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   tournamentCardComplete: { opacity: 0.88 },
+  tournamentCardInner: { padding: 14 },
   tournamentCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
   tournamentCardMeta: { fontSize: 12, color: '#666', marginTop: 4 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
