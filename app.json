@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Tennis Scorekeeper",
+    "slug": "tennis-scorekeeper",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tennis.scorekeeper"
+    },
+    "android": {
+      "package": "com.tennis.scorekeeper"
+    },
+    "plugins": [
+      "expo-asset"
+    ]
+  }
+}
