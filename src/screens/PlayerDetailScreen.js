@@ -167,6 +167,10 @@ export default function PlayerDetailScreen({ route, navigation }) {
             />
             <StatRow label="Wins / Losses" value={`${stats.wins} / ${stats.losses}`} />
             <StatRow label="Win rate" value={`${stats.winPercentage.toFixed(1)}%`} />
+            <StatRow label="Current win streak" value={stats.currentWinStreak ?? 0} />
+            <StatRow label="Best win streak" value={stats.bestWinStreak ?? 0} />
+            <StatRow label="Bagels served (6–0)" value={stats.bagelsServed ?? 0} />
+            <StatRow label="Breadsticks (6–1)" value={stats.breadsticksServed ?? 0} />
           </View>
         )}
       </View>
@@ -349,7 +353,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
-  },
     marginBottom: 12,
   },
   profileHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },

@@ -6,6 +6,8 @@ import HomeScreen from '../screens/HomeScreen';
 import MatchDetailScreen from '../screens/MatchDetailScreen';
 import MatchupStatsScreen from '../screens/MatchupStatsScreen';
 import PlayerDetailScreen from '../screens/PlayerDetailScreen';
+import NewTournamentScreen from '../screens/NewTournamentScreen';
+import TournamentDetailScreen from '../screens/TournamentDetailScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -26,10 +28,18 @@ export default function AppNavigator() {
     <Stack.Navigator
       screenOptions={({ navigation, route }) => ({
         headerLargeTitle: false,
-        headerLeft: route.name === 'Home' ? undefined : () => <HomeButton navigation={navigation} />,
+        headerRight: route.name === 'Home' ? undefined : () => <HomeButton navigation={navigation} />,
       })}
     >
-      <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Tennis Score' }} />
+      <Stack.Screen
+        name="Home"
+        component={HomeScreen}
+        options={{
+          title: 'AI Tennis Record Keeper',
+          headerLeft: () => null,
+          headerBackVisible: false,
+        }}
+      />
       <Stack.Screen
         name="MatchupStats"
         component={MatchupStatsScreen}
@@ -49,11 +59,21 @@ export default function AppNavigator() {
         component={PlayerDetailScreen}
         options={({ route }) => ({ title: route.params?.playerName ?? 'Player' })}
       />
+      <Stack.Screen
+        name="NewTournament"
+        component={NewTournamentScreen}
+        options={{ title: 'New tournament' }}
+      />
+      <Stack.Screen
+        name="TournamentDetail"
+        component={TournamentDetailScreen}
+        options={({ route }) => ({ title: route.params?.tournamentName ?? 'Tournament' })}
+      />
     </Stack.Navigator>
   );
 }
 
 const styles = StyleSheet.create({
-  homeBtn: { paddingLeft: 4, paddingVertical: 8, paddingRight: 12 },
+  homeBtn: { paddingLeft: 12, paddingVertical: 8, paddingRight: 4 },
   homeBtnText: { fontSize: 16, color: '#1a472a', fontWeight: '600' },
 });

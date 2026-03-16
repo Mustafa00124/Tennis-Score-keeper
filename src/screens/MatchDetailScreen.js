@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
   ScrollView,
   Alert,
   Image,
-  Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -33,12 +32,12 @@ export default function MatchDetailScreen({ route, navigation }) {
       setDatePlayed(d.date_played || TODAY);
       setRemarks(d.remarks || '');
       setImages(d.images || []);
-      const existingSets = await getSetScoresForMatch(matchId);
-      if (existingSets.length) {
+      const existing = await getSetScoresForMatch(matchId);
+      if (existing.length > 0) {
         setSets(
-          existingSets.map((s) => ({
-            gamesPlayer1: s.games_player1,
-            gamesPlayer2: s.games_player2,
+          existing.map((s) => ({
+            gamesPlayer1: String(s.games_player1 ?? ''),
+            gamesPlayer2: String(s.games_player2 ?? ''),
           }))
         );
       } else {
@@ -53,12 +52,6 @@ export default function MatchDetailScreen({ route, navigation }) {
     }, [load])
   );
 
-  useEffect(() => {
-    if (detail?.date_played) setDatePlayed(detail.date_played);
-    if (detail?.remarks != null) setRemarks(detail.remarks || '');
-    if (detail?.images?.length) setImages(detail.images);
-  }, [detail]);
-
   const addSet = useCallback(() => {
     setSets((s) => [...s, { gamesPlayer1: '', gamesPlayer2: '' }]);
   }, []);
@@ -69,10 +62,9 @@ export default function MatchDetailScreen({ route, navigation }) {
 
   const updateSet = useCallback((index, field, value) => {
     if (value !== '' && !/^\d+$/.test(value)) return;
-    const num = value === '' ? '' : parseInt(value, 10);
     setSets((prev) => {
       const next = [...prev];
-      next[index] = { ...next[index], [field]: num };
+      next[index] = { ...next[index], [field]: value };
       return next;
     });
   }, []);
@@ -90,8 +82,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         quality: 0.8,
       });
       if (!result.canceled && result.assets?.length) {
-        const uris = result.assets.map((a) => a.uri);
-        setImages((prev) => [...prev, ...uris]);
+        setImages((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
       }
     } catch (e) {
       Alert.alert('Error', e.message || 'Could not pick image');
@@ -102,42 +93,45 @@ export default function MatchDetailScreen({ route, navigation }) {
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const getSetNums = () => {
-    return sets.map((s) => {
-      const a = s.gamesPlayer1 === '' ? 0 : (typeof s.gamesPlayer1 === 'number' ? s.gamesPlayer1 : parseInt(String(s.gamesPlayer1), 10));
-      const b = s.gamesPlayer2 === '' ? 0 : (typeof s.gamesPlayer2 === 'number' ? s.gamesPlayer2 : parseInt(String(s.gamesPlayer2), 10));
-      return { gamesPlayer1: Number.isInteger(a) ? a : 0, gamesPlayer2: Number.isInteger(b) ? b : 0 };
-    });
-  };
+  const getValidSets = useCallback(() => {
+    return sets
+      .map((s) => {
+        const a = s.gamesPlayer1 === '' ? null : parseInt(s.gamesPlayer1, 10);
+        const b = s.gamesPlayer2 === '' ? null : parseInt(s.gamesPlayer2, 10);
+        if (a == null || b == null || !Number.isInteger(a) || !Number.isInteger(b)) return null;
+        return { gamesPlayer1: a, gamesPlayer2: b };
+      })
+      .filter((s) => s != null && (s.gamesPlayer1 > 0 || s.gamesPlayer2 > 0));
+  }, [sets]);
 
   const handleSave = useCallback(async () => {
     if (!matchId) return;
-    const parsed = getSetNums();
-    const valid = parsed.filter((s) => s.gamesPlayer1 > 0 || s.gamesPlayer2 > 0);
-    if (valid.length > 0) {
-      const p1Sets = valid.filter((s) => s.gamesPlayer1 > s.gamesPlayer2).length;
-      const p2Sets = valid.filter((s) => s.gamesPlayer2 > s.gamesPlayer1).length;
-      if (p1Sets === p2Sets) {
-        Alert.alert('No winner', 'One player must win more sets than the other, or leave scores empty.');
-        return;
-      }
+    const validSets = getValidSets();
+    if (validSets.length === 0) {
+      Alert.alert('Add at least one set', 'Enter set scores (e.g. 6–4) with a clear winner.');
+      return;
+    }
+    const p1Sets = validSets.filter((s) => s.gamesPlayer1 > s.gamesPlayer2).length;
+    const p2Sets = validSets.filter((s) => s.gamesPlayer2 > s.gamesPlayer1).length;
+    if (p1Sets === p2Sets) {
+      Alert.alert('No winner', 'One player must win more sets than the other.');
+      return;
     }
     setSaving(true);
     try {
       await updateMatch(matchId, {
-        datePlayed: datePlayed || '',
-        setScores: valid,
+        datePlayed: datePlayed.trim() || '',
+        setScores: validSets,
         remarks: remarks.trim() || null,
         images: images.length ? images : null,
       });
-      Alert.alert('Saved', 'Match updated.');
-      load();
+      navigation.goBack();
     } catch (e) {
       Alert.alert('Error', e.message || 'Could not save');
     } finally {
       setSaving(false);
     }
-  }, [matchId, datePlayed, sets, remarks, images]);
+  }, [matchId, datePlayed, sets, remarks, images, getValidSets, navigation]);
 
   if (!detail) {
     return <Text style={styles.loading}>Loading…</Text>;
@@ -149,6 +143,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         <Text style={styles.vs}>
           {detail.player1_name} vs {detail.player2_name}
         </Text>
+        <Text style={styles.subtitle}>Edit date, set scores, remarks and photos</Text>
       </View>
 
       <View style={styles.section}>
@@ -165,8 +160,8 @@ export default function MatchDetailScreen({ route, navigation }) {
       <View style={styles.section}>
         <View style={styles.setHeader}>
           <Text style={styles.label}>Set scores</Text>
-          <TouchableOpacity onPress={addSet} style={styles.addSetBtn}>
-            <Text style={styles.addSetText}>+ Set</Text>
+          <TouchableOpacity onPress={addSet} style={styles.addSetLink}>
+            <Text style={styles.addSetLinkText}>+ Add set</Text>
           </TouchableOpacity>
         </View>
         {sets.map((set, i) => (
@@ -176,8 +171,8 @@ export default function MatchDetailScreen({ route, navigation }) {
               style={styles.setInput}
               keyboardType="number-pad"
               maxLength={2}
-              value={String(set.gamesPlayer1)}
-              onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer1', t === '' ? '' : t)}
+              value={set.gamesPlayer1}
+              onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer1', t)}
               placeholder={detail.player1_name?.slice(0, 4) || 'P1'}
               placeholderTextColor="#999"
             />
@@ -186,8 +181,8 @@ export default function MatchDetailScreen({ route, navigation }) {
               style={styles.setInput}
               keyboardType="number-pad"
               maxLength={2}
-              value={String(set.gamesPlayer2)}
-              onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer2', t === '' ? '' : t)}
+              value={set.gamesPlayer2}
+              onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer2', t)}
               placeholder={detail.player2_name?.slice(0, 4) || 'P2'}
               placeholderTextColor="#999"
             />
@@ -206,7 +201,7 @@ export default function MatchDetailScreen({ route, navigation }) {
           style={styles.remarksInput}
           value={remarks}
           onChangeText={setRemarks}
-          placeholder="Notes about the match…"
+          placeholder="Notes about this day…"
           placeholderTextColor="#999"
           multiline
           numberOfLines={3}
@@ -232,8 +227,12 @@ export default function MatchDetailScreen({ route, navigation }) {
         )}
       </View>
 
-      <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={handleSave} disabled={saving}>
-        <Text style={styles.saveBtnText}>{saving ? 'Saving…' : 'Save'}</Text>
+      <TouchableOpacity
+        style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+        onPress={handleSave}
+        disabled={saving}
+      >
+        <Text style={styles.saveBtnText}>{saving ? 'Saving…' : 'Save & back to match list'}</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -245,6 +244,7 @@ const styles = StyleSheet.create({
   loading: { padding: 24, textAlign: 'center', color: '#666' },
   header: { marginBottom: 20 },
   vs: { fontSize: 22, fontWeight: '700', color: '#1a472a', textAlign: 'center' },
+  subtitle: { fontSize: 14, color: '#666', textAlign: 'center', marginTop: 4 },
   section: { marginBottom: 20 },
   label: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 8 },
   dateInput: {
@@ -257,8 +257,8 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
   },
   setHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  addSetBtn: { padding: 8 },
-  addSetText: { color: '#1a472a', fontWeight: '600', fontSize: 14 },
+  addSetLink: { padding: 8 },
+  addSetLinkText: { color: '#1a472a', fontWeight: '600', fontSize: 14 },
   setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 },
   setNum: { width: 44, fontSize: 14, color: '#666' },
   setInput: {
@@ -297,9 +297,25 @@ const styles = StyleSheet.create({
   imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   imageWrap: { position: 'relative' },
   thumb: { width: 80, height: 80, borderRadius: 8 },
-  removeImageBtn: { position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  removeImageBtn: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   removeImageText: { color: '#fff', fontSize: 14 },
-  saveBtn: { backgroundColor: '#1a472a', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  saveBtn: {
+    backgroundColor: '#1a472a',
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
   saveBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   saveBtnDisabled: { opacity: 0.6 },
 });

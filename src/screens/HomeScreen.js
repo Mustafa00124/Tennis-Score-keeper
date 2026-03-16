@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   TextInput,
+  ImageBackground,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -18,22 +19,30 @@ import {
   createMatchup,
   createPlayer,
   getPlayerStats,
+  getAllTournaments,
 } from '../db/database';
 
 export default function HomeScreen({ navigation }) {
   const [matches, setMatches] = useState([]);
   const [players, setPlayers] = useState([]);
+  const [tournaments, setTournaments] = useState([]);
   const [playerStats, setPlayerStats] = useState({});
   const [addMatchupVisible, setAddMatchupVisible] = useState(false);
   const [addPlayerVisible, setAddPlayerVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState('matches');
   const [player1Id, setPlayer1Id] = useState(null);
   const [player2Id, setPlayer2Id] = useState(null);
   const [newPlayerName, setNewPlayerName] = useState('');
 
   const load = useCallback(async () => {
-    const [matchList, playerList] = await Promise.all([getAllMatches(), getAllPlayers()]);
+    const [matchList, playerList, tournamentList] = await Promise.all([
+      getAllMatches(),
+      getAllPlayers(),
+      getAllTournaments(),
+    ]);
     setMatches(matchList);
     setPlayers(playerList);
+    setTournaments(tournamentList);
     const stats = await Promise.all(
       playerList.map((p) => getPlayerStats(p.id).then((s) => ({ id: p.id, ...s })))
     );
@@ -95,21 +104,70 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.row}>
-        {/* Left: Match ups */}
-        <View style={styles.column}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Match ups</Text>
-            <TouchableOpacity style={styles.plusBtn} onPress={openAddMatchup}>
-              <Text style={styles.plusText}>+</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView
-            style={styles.cardScroll}
-            contentContainerStyle={styles.cardScrollContent}
-            showsVerticalScrollIndicator={false}
+      <ImageBackground
+        source={require('../../media/tennis.jpg')}
+        style={styles.backgroundImage}
+        resizeMode="cover"
+      >
+        <View style={styles.backgroundOverlay} />
+        {/* Floating pill tab bar */}
+        <View style={styles.tabBarWrap}>
+          <View style={styles.tabBar}>
+          <TouchableOpacity
+            style={[styles.tabSegment, activeTab === 'matches' ? styles.tabSegmentActive : styles.tabSegmentInactive]}
+            onPress={() => setActiveTab('matches')}
+            activeOpacity={0.85}
           >
-            {matches.length === 0 ? (
+            <Text style={[styles.tabText, activeTab === 'matches' ? styles.tabTextActive : styles.tabTextInactive]}>
+              Match up
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabSegment, activeTab === 'players' ? styles.tabSegmentActive : styles.tabSegmentInactive]}
+            onPress={() => setActiveTab('players')}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.tabText, activeTab === 'players' ? styles.tabTextActive : styles.tabTextInactive]}>
+              Players
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabSegment, activeTab === 'tournaments' ? styles.tabSegmentActive : styles.tabSegmentInactive]}
+            onPress={() => setActiveTab('tournaments')}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.tabText, activeTab === 'tournaments' ? styles.tabTextActive : styles.tabTextInactive]}>
+              Tournaments
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.content}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>
+            {activeTab === 'matches' ? 'Match ups' : activeTab === 'players' ? 'Players' : 'Tournaments'}
+          </Text>
+          <TouchableOpacity
+            style={styles.plusBtn}
+            onPress={
+              activeTab === 'matches'
+                ? openAddMatchup
+                : activeTab === 'players'
+                  ? openAddPlayer
+                  : () => navigation.navigate('NewTournament')
+            }
+          >
+            <Text style={styles.plusText}>+</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView
+          style={styles.cardScroll}
+          contentContainerStyle={styles.cardScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {activeTab === 'matches' ? (
+            matches.length === 0 ? (
               <Text style={styles.emptyHint}>No match ups. Tap + to add.</Text>
             ) : (
               matches.map((m) => (
@@ -124,27 +182,19 @@ export default function HomeScreen({ navigation }) {
                       player2Name: m.player2_name,
                     })
                   }
-                  onEdit={() => navigation.navigate('MatchDetail', { matchId: m.id })}
+                  onAddDay={async () => {
+                    try {
+                      const newMatchId = await createMatchup(m.player1_id, m.player2_id);
+                      navigation.navigate('MatchDetail', { matchId: newMatchId });
+                    } catch (e) {
+                      Alert.alert('Error', e.message || 'Could not add day');
+                    }
+                  }}
                 />
               ))
-            )}
-          </ScrollView>
-        </View>
-
-        {/* Right: Players */}
-        <View style={styles.column}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Players</Text>
-            <TouchableOpacity style={styles.plusBtn} onPress={openAddPlayer}>
-              <Text style={styles.plusText}>+</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView
-            style={styles.cardScroll}
-            contentContainerStyle={styles.cardScrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {players.length === 0 ? (
+            )
+          ) : activeTab === 'players' ? (
+            players.length === 0 ? (
               <Text style={styles.emptyHint}>No players. Tap + to add.</Text>
             ) : (
               players.map((p) => (
@@ -155,10 +205,21 @@ export default function HomeScreen({ navigation }) {
                   onPress={() => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name })}
                 />
               ))
-            )}
-          </ScrollView>
-        </View>
+            )
+          ) : tournaments.length === 0 ? (
+            <Text style={styles.emptyHint}>No tournaments. Tap + to create.</Text>
+          ) : (
+            tournaments.map((t) => (
+              <TournamentCard
+                key={t.id}
+                tournament={t}
+                onPress={() => navigation.navigate('TournamentDetail', { tournamentId: t.id, tournamentName: t.name })}
+              />
+            ))
+          )}
+        </ScrollView>
       </View>
+      </ImageBackground>
 
       {/* Add match up modal */}
       <Modal visible={addMatchupVisible} animationType="slide" transparent>
@@ -252,7 +313,7 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-function MatchUpCard({ match, onPress, onEdit }) {
+function MatchUpCard({ match, onPress, onAddDay }) {
   const dateLabel = match.date_played || 'No date set';
   return (
     <TouchableOpacity style={styles.matchCard} onPress={onPress} activeOpacity={0.7}>
@@ -261,14 +322,14 @@ function MatchUpCard({ match, onPress, onEdit }) {
           {match.player1_name} vs {match.player2_name}
         </Text>
         <TouchableOpacity
-          style={styles.editBtn}
+          style={styles.addBtn}
           onPress={(e) => {
             e.stopPropagation();
-            onEdit?.();
+            onAddDay?.();
           }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={styles.editBtnText}>Edit</Text>
+          <Text style={styles.addBtnText}>Add</Text>
         </TouchableOpacity>
       </View>
       <Text style={styles.matchCardDate}>{dateLabel}</Text>
@@ -292,10 +353,70 @@ function PlayerCard({ player, stats, onPress }) {
   );
 }
 
+function TournamentCard({ tournament, onPress }) {
+  const isComplete = tournament.status === 'complete';
+  const metaParts = [`${tournament.draw_size}-draw`, isComplete ? 'Complete' : 'Ongoing'];
+  if (tournament.date) metaParts.push(tournament.date);
+  return (
+    <TouchableOpacity style={[styles.tournamentCard, isComplete && styles.tournamentCardComplete]} onPress={onPress} activeOpacity={0.7}>
+      <Text style={styles.tournamentCardName} numberOfLines={1}>{tournament.name}</Text>
+      <Text style={styles.tournamentCardMeta} numberOfLines={1}>
+        {metaParts.join(' · ')}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f0' },
-  row: { flex: 1, flexDirection: 'row', paddingHorizontal: 8, paddingTop: 8, gap: 8 },
-  column: { flex: 1, minWidth: 0 },
+  container: { flex: 1, backgroundColor: '#1a2e1a' },
+  backgroundImage: { flex: 1 },
+  backgroundOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  tabBarWrap: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 4,
+    alignItems: 'center',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  tabSegment: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabSegmentActive: {
+    backgroundColor: '#1a472a',
+    shadowColor: '#1a472a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  tabSegmentInactive: {
+    backgroundColor: 'transparent',
+  },
+  tabText: { fontSize: 16, fontWeight: '600' },
+  tabTextActive: { color: '#fff' },
+  tabTextInactive: { color: 'rgba(255,255,255,0.9)' },
+  content: { flex: 1, paddingHorizontal: 12, paddingTop: 8 },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -303,7 +424,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     paddingHorizontal: 4,
   },
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: '#1a472a' },
+  sectionTitle: { fontSize: 17, fontWeight: '700', color: '#fff', textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   plusBtn: {
     width: 36,
     height: 36,
@@ -315,42 +436,61 @@ const styles = StyleSheet.create({
   plusText: { fontSize: 22, color: '#fff', fontWeight: '300', lineHeight: 24 },
   cardScroll: { flex: 1 },
   cardScrollContent: { paddingBottom: 24 },
-  emptyHint: { color: '#666', fontSize: 14, paddingVertical: 12, paddingHorizontal: 4 },
+  emptyHint: { color: 'rgba(255,255,255,0.9)', fontSize: 14, paddingVertical: 12, paddingHorizontal: 4, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   matchCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#1a472a',
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
+    overflow: 'hidden',
   },
   matchCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 },
   matchCardVs: { fontSize: 14, fontWeight: '700', color: '#1a1a1a', flex: 1 },
-  editBtn: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#1a472a' },
-  editBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  addBtn: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#1a472a' },
+  addBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   matchCardDate: { fontSize: 12, color: '#666', marginTop: 4 },
   matchCardRemarks: { fontSize: 11, color: '#888', marginTop: 2, fontStyle: 'italic' },
   matchCardTap: { fontSize: 11, color: '#1a472a', marginTop: 4, opacity: 0.9 },
   playerCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#2d5a3d',
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
+    overflow: 'hidden',
   },
   playerCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
   playerCardStats: { fontSize: 12, color: '#666', marginTop: 4 },
+  tournamentCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  tournamentCardComplete: { opacity: 0.88 },
+  tournamentCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
+  tournamentCardMeta: { fontSize: 12, color: '#666', marginTop: 4 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalCard: {
     backgroundColor: '#fff',

@@ -53,6 +53,10 @@ export default function StatsScreen() {
                 <Text style={styles.statNum}>{p.totalSetsWon} sets</Text>
                 <Text style={styles.statNum}>{p.totalGamesWon} games</Text>
                 <Text style={[styles.statNum, styles.winPct]}>{p.winPercentage.toFixed(1)}%</Text>
+                <Text style={styles.statNum}>Streak: {p.currentWinStreak ?? 0}</Text>
+                <Text style={styles.statNum}>Best: {p.bestWinStreak ?? 0}</Text>
+                <Text style={styles.statNum}>Bagels: {p.bagelsServed ?? 0}</Text>
+                <Text style={styles.statNum}>Breadsticks: {p.breadsticksServed ?? 0}</Text>
               </View>
             </View>
           ))}
