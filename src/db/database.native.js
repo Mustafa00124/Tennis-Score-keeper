@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { isSetComplete } from '../utils/tennisScoring';
 
 const DB_NAME = 'tennis_scorekeeper.db';
 let db = null;
@@ -112,6 +113,12 @@ export async function getDb() {
   } catch (_) {}
   try {
     await db.execAsync('ALTER TABLE tournaments ADD COLUMN images TEXT');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE set_scores ADD COLUMN tiebreak_player1 INTEGER');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE set_scores ADD COLUMN tiebreak_player2 INTEGER');
   } catch (_) {}
   return db;
 }
@@ -449,7 +456,7 @@ export async function createMatch(player1Id, player2Id, datePlayed, setScores) {
   return matchId;
 }
 
-/** Update match: datePlayed, setScores (array of { gamesPlayer1, gamesPlayer2 }), remarks, images (JSON string array). */
+/** Update match: datePlayed, setScores (array of { gamesPlayer1, gamesPlayer2, tiebreakPlayer1?, tiebreakPlayer2? }), remarks, images. */
 export async function updateMatch(matchId, { datePlayed, setScores, remarks, images }) {
   const database = await getDb();
   if (datePlayed !== undefined) {
@@ -465,10 +472,12 @@ export async function updateMatch(matchId, { datePlayed, setScores, remarks, ima
   if (setScores && setScores.length >= 0) {
     await database.runAsync('DELETE FROM set_scores WHERE match_id = ?', [matchId]);
     for (let i = 0; i < setScores.length; i++) {
-      const { gamesPlayer1, gamesPlayer2 } = setScores[i];
+      const { gamesPlayer1, gamesPlayer2, tiebreakPlayer1, tiebreakPlayer2 } = setScores[i];
+      const tb1 = tiebreakPlayer1 != null && tiebreakPlayer1 !== '' ? tiebreakPlayer1 : null;
+      const tb2 = tiebreakPlayer2 != null && tiebreakPlayer2 !== '' ? tiebreakPlayer2 : null;
       await database.runAsync(
-        'INSERT INTO set_scores (match_id, set_number, games_player1, games_player2) VALUES (?, ?, ?, ?)',
-        [matchId, i + 1, gamesPlayer1 ?? 0, gamesPlayer2 ?? 0]
+        'INSERT INTO set_scores (match_id, set_number, games_player1, games_player2, tiebreak_player1, tiebreak_player2) VALUES (?, ?, ?, ?, ?, ?)',
+        [matchId, i + 1, gamesPlayer1 ?? 0, gamesPlayer2 ?? 0, tb1, tb2]
       );
     }
   }
@@ -492,7 +501,7 @@ export async function getMatchesForPlayer(playerId) {
 export async function getSetScoresForMatch(matchId) {
   const database = await getDb();
   const rows = await database.getAllAsync(
-    'SELECT set_number, games_player1, games_player2 FROM set_scores WHERE match_id = ? ORDER BY set_number',
+    'SELECT set_number, games_player1, games_player2, tiebreak_player1, tiebreak_player2 FROM set_scores WHERE match_id = ? ORDER BY set_number',
     [matchId]
   );
   return rows;
@@ -518,17 +527,29 @@ export async function getMatchResult(matchId) {
   let setsPlayer2 = 0;
   let gamesPlayer1 = 0;
   let gamesPlayer2 = 0;
+  let incompleteSetCount = 0;
   for (const s of sets) {
-    if (s.games_player1 > s.games_player2) setsPlayer1++;
-    else setsPlayer2++;
-    gamesPlayer1 += s.games_player1;
-    gamesPlayer2 += s.games_player2;
+    const complete = isSetComplete(
+      s.games_player1,
+      s.games_player2,
+      s.tiebreak_player1,
+      s.tiebreak_player2
+    );
+    if (complete) {
+      if (s.games_player1 > s.games_player2) setsPlayer1++;
+      else setsPlayer2++;
+      gamesPlayer1 += s.games_player1;
+      gamesPlayer2 += s.games_player2;
+    } else if ((s.games_player1 ?? 0) > 0 || (s.games_player2 ?? 0) > 0) {
+      incompleteSetCount++;
+    }
   }
   const database = await getDb();
   const m = await database.getFirstAsync('SELECT player1_id, player2_id FROM matches WHERE id = ?', [matchId]);
   if (!m) return null;
-  const winnerId = setsPlayer1 > setsPlayer2 ? m.player1_id : m.player2_id;
-  const loserId = setsPlayer1 > setsPlayer2 ? m.player2_id : m.player1_id;
+  const hasIncompleteSets = incompleteSetCount > 0;
+  const winnerId = setsPlayer1 > setsPlayer2 ? m.player1_id : setsPlayer2 > setsPlayer1 ? m.player2_id : null;
+  const loserId = setsPlayer2 > setsPlayer1 ? m.player1_id : setsPlayer1 > setsPlayer2 ? m.player2_id : null;
   return {
     winnerId,
     loserId,
@@ -536,6 +557,8 @@ export async function getMatchResult(matchId) {
     setsPlayer2,
     gamesPlayer1,
     gamesPlayer2,
+    incompleteSetCount,
+    hasIncompleteSets,
   };
 }
 
@@ -547,6 +570,7 @@ export async function getPlayerStats(playerId) {
   let totalSetsWon = 0;
   let totalSetsPlayed = 0;
   let totalGamesPlayed = 0;
+  let incompleteSets = 0;
   let bagelsServed = 0;
   let breadsticksServed = 0;
   const opponentCounts = {};
@@ -555,7 +579,12 @@ export async function getPlayerStats(playerId) {
   for (const match of matches) {
     const result = await getMatchResult(match.id);
     if (!result) continue;
+    if (result.winnerId == null) {
+      incompleteSets += result.incompleteSetCount ?? 0;
+      continue;
+    }
     recordedMatches++;
+    incompleteSets += result.incompleteSetCount ?? 0;
     const isPlayer1 = match.player1_id === playerId;
     const won = result.winnerId === playerId;
     if (won) wins++;
@@ -566,6 +595,7 @@ export async function getPlayerStats(playerId) {
     totalGamesPlayed += result.gamesPlayer1 + result.gamesPlayer2;
     const sets = await getSetScoresForMatch(match.id);
     for (const s of sets) {
+      if (!isSetComplete(s.games_player1, s.games_player2, s.tiebreak_player1, s.tiebreak_player2)) continue;
       const myGames = isPlayer1 ? s.games_player1 : s.games_player2;
       const oppGames = isPlayer1 ? s.games_player2 : s.games_player1;
       if (myGames === 6 && oppGames === 0) bagelsServed++;
@@ -605,6 +635,7 @@ export async function getPlayerStats(playerId) {
     totalSetsWon,
     totalSetsPlayed,
     totalGamesPlayed,
+    incompleteSets,
     totalUniquePlayers: Object.keys(opponentCounts).length,
     mostPlayedWith,
     winPercentage: winPct,
@@ -623,7 +654,7 @@ export async function getHeadToHead(playerAId, playerBId) {
     const otherId = m.player1_id === playerAId ? m.player2_id : m.player1_id;
     if (otherId !== playerBId) continue;
     const result = await getMatchResult(m.id);
-    if (!result) continue;
+    if (!result || result.winnerId == null) continue;
     if (result.winnerId === playerAId) wins++;
     else losses++;
   }
@@ -679,16 +710,28 @@ export async function getMatchupDetailedStats(player1Id, player2Id) {
   let bagelsServedPlayer2 = 0;
   let breadsticksServedPlayer1 = 0;
   let breadsticksServedPlayer2 = 0;
+  let incompleteSets = 0;
   const dayWinners = [];
+  const daySets = [];
 
   for (const m of between) {
     const sets = await getSetScoresForMatch(m.id);
     const isP1First = m.player1_id === player1Id;
     let setsP1ThisDay = 0;
     let setsP2ThisDay = 0;
-    if (sets.length > mostSetsInSingleDay) mostSetsInSingleDay = sets.length;
-
+    let completedCountThisDay = 0;
     for (const s of sets) {
+      const complete = isSetComplete(
+        s.games_player1,
+        s.games_player2,
+        s.tiebreak_player1,
+        s.tiebreak_player2
+      );
+      if (!complete) {
+        if ((s.games_player1 ?? 0) > 0 || (s.games_player2 ?? 0) > 0) incompleteSets++;
+        continue;
+      }
+      completedCountThisDay++;
       const g1 = s.games_player1 ?? 0;
       const g2 = s.games_player2 ?? 0;
       const p1Games = isP1First ? g1 : g2;
@@ -719,6 +762,9 @@ export async function getMatchupDetailedStats(player1Id, player2Id) {
         setsWonCountPlayer2++;
       }
     }
+    if (completedCountThisDay > mostSetsInSingleDay) mostSetsInSingleDay = completedCountThisDay;
+    const dateStr = (m.date_played || '').slice(0, 10);
+    if (dateStr) daySets.push({ dateStr, sets: completedCountThisDay });
     if (setsP1ThisDay > setsP2ThisDay) {
       daysWonPlayer1++;
       dayWinners.push('p1');
@@ -727,6 +773,20 @@ export async function getMatchupDetailedStats(player1Id, player2Id) {
       dayWinners.push('p2');
     }
   }
+
+  let mostSetsInWeek = 0;
+  let mostSetsInMonth = 0;
+  const setsByWeek = {};
+  const setsByMonth = {};
+  for (const { dateStr, sets } of daySets) {
+    const t = new Date(dateStr + 'T12:00:00').getTime();
+    const weekKey = Math.floor(t / (7 * 24 * 60 * 60 * 1000));
+    const monthKey = dateStr.slice(0, 7);
+    setsByWeek[weekKey] = (setsByWeek[weekKey] || 0) + sets;
+    setsByMonth[monthKey] = (setsByMonth[monthKey] || 0) + sets;
+  }
+  if (Object.keys(setsByWeek).length) mostSetsInWeek = Math.max(...Object.values(setsByWeek));
+  if (Object.keys(setsByMonth).length) mostSetsInMonth = Math.max(...Object.values(setsByMonth));
 
   let currentWinStreakPlayer1 = 0;
   let currentWinStreakPlayer2 = 0;
@@ -764,6 +824,7 @@ export async function getMatchupDetailedStats(player1Id, player2Id) {
   return {
     totalDaysPlayed: totalDays,
     totalSetsPlayed,
+    incompleteSets,
     setsPlayer1,
     setsPlayer2,
     totalGamesPlayed,
@@ -773,6 +834,8 @@ export async function getMatchupDetailedStats(player1Id, player2Id) {
     closestSet: closestSet ? closestSet.score : null,
     easiestSet: easiestSet ? easiestSet.score : null,
     mostSetsInSingleDay,
+    mostSetsInWeek,
+    mostSetsInMonth,
     averageSetScore,
     dayWinPctPlayer1,
     dayWinPctPlayer2,
@@ -791,7 +854,7 @@ export async function getMatchupDetailedStats(player1Id, player2Id) {
   };
 }
 
-/** Per-day data for matchup graph: date, sets won by P1 and P2 (chronological, oldest first) */
+/** Per-day data for matchup graph: date, sets won by P1 and P2, hasIncompleteSets (chronological, oldest first) */
 export async function getMatchupDayByDay(player1Id, player2Id) {
   const matches = await getMatchesForPlayer(player1Id);
   const between = matches.filter(
@@ -809,6 +872,7 @@ export async function getMatchupDayByDay(player1Id, player2Id) {
       matchId: m.id,
       setsPlayer1,
       setsPlayer2,
+      hasIncompleteSets: result.hasIncompleteSets ?? false,
     });
   }
   days.sort((a, b) => (a.date || '').localeCompare(b.date || '') || 0);

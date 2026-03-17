@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ImageBackground } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   getHeadToHead,
@@ -9,6 +9,115 @@ import {
   getMatchupDayByDay,
   createMatchup,
 } from '../db/database';
+
+const BAR_HEIGHT_PER_SET = 10;
+const DAY_COLUMN_WIDTH = 26;
+const COLOR_PLAYER1 = '#2563eb';
+const COLOR_PLAYER2 = '#b91c1c';
+const COLOR_NEUTRAL = '#c0840c';
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function toDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function addDays(d, n) {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+function parseDateStr(str) {
+  if (!str || str.length < 10) return null;
+  const [y, m, d] = str.slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const date = new Date(y, m - 1, d);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+/** All calendar days from firstMatchDate to today; each has { dateStr, date, setsPlayer1, setsPlayer2, matchId, hasIncompleteSets } */
+function buildFullDayList(dayByDay) {
+  const playByDate = {};
+  for (const d of dayByDay) {
+    const key = (d.date || '').slice(0, 10);
+    if (key) playByDate[key] = {
+      setsPlayer1: d.setsPlayer1 || 0,
+      setsPlayer2: d.setsPlayer2 || 0,
+      matchId: d.matchId,
+      hasIncompleteSets: d.hasIncompleteSets || false,
+    };
+  }
+  const playedDates = Object.keys(playByDate).filter(Boolean);
+  if (playedDates.length === 0) return [];
+  const startDate = playedDates.reduce((a, b) => (a < b ? a : b));
+  const start = parseDateStr(startDate);
+  const end = new Date();
+  if (!start || start > end) return [];
+  const list = [];
+  let d = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  while (d <= endDay) {
+    const dateStr = toDateStr(d);
+    const play = playByDate[dateStr];
+    list.push({
+      dateStr,
+      date: new Date(d),
+      setsPlayer1: play ? play.setsPlayer1 : 0,
+      setsPlayer2: play ? play.setsPlayer2 : 0,
+      matchId: play ? play.matchId : null,
+      hasIncompleteSets: play ? play.hasIncompleteSets : false,
+    });
+    d = addDays(d, 1);
+  }
+  return list;
+}
+
+/** Group full day list into { year, months: [ { monthLabel, monthLabelFull, monthIndex, year, days: [...] } ] } */
+function groupByYearMonth(fullDays) {
+  const byYear = {};
+  for (const day of fullDays) {
+    const y = day.date.getFullYear();
+    const m = day.date.getMonth();
+    if (!byYear[y]) byYear[y] = {};
+    if (!byYear[y][m]) byYear[y][m] = [];
+    byYear[y][m].push(day);
+  }
+  const years = Object.keys(byYear).map(Number).sort((a, b) => a - b);
+  return years.map((year) => {
+    const monthIndices = Object.keys(byYear[year]).map(Number).sort((a, b) => a - b);
+    const months = monthIndices.map((monthIndex) => ({
+      monthLabel: MONTH_NAMES[monthIndex],
+      monthLabelFull: MONTH_NAMES_FULL[monthIndex],
+      monthIndex,
+      year,
+      days: byYear[year][monthIndex],
+    }));
+    return { year, months };
+  });
+}
+
+function UnifiedTopBar({ player1Name, player2Name, setsPlayer1, setsPlayer2 }) {
+  return (
+    <View style={styles.h2hBoxGlass}>
+      <View style={styles.unifiedLegendRow}>
+        <Text style={styles.legendPlayer1}>■ Player 1: {player1Name || '—'}</Text>
+        <Text style={styles.legendPlayer2}>■ Player 2: {player2Name || '—'}</Text>
+        <Text style={styles.legendYellow}>■ Incomplete</Text>
+      </View>
+      <Text style={styles.h2hLabelGlass}>Head to Head (sets)</Text>
+      <View style={styles.h2hScoreRow}>
+        <Text style={[styles.h2hScoreGlass, { color: COLOR_PLAYER1 }]}>{setsPlayer1 ?? '—'}</Text>
+        <Text style={styles.h2hScoreDash}> – </Text>
+        <Text style={[styles.h2hScoreGlass, { color: COLOR_PLAYER2 }]}>{setsPlayer2 ?? '—'}</Text>
+      </View>
+    </View>
+  );
+}
 
 export default function MatchupStatsScreen({ route, navigation }) {
   const { player1Id, player2Id, player1Name, player2Name } = route.params || {};
@@ -27,9 +136,9 @@ export default function MatchupStatsScreen({ route, navigation }) {
       getMatchupDayByDay(player1Id, player2Id),
     ]);
     setH2h(record);
-    const between = allMatches.filter(
-      (m) => m.player1_id === player2Id || m.player2_id === player2Id
-    );
+    const between = (allMatches || [])
+      .filter((m) => m && (m.player1_id === player2Id || m.player2_id === player2Id))
+      .sort((a, b) => (a.date_played || '').localeCompare(b.date_played || '') || (a.id - b.id));
     setMatches(between);
     setDetailedStats(stats);
     setDayByDay(days);
@@ -40,6 +149,11 @@ export default function MatchupStatsScreen({ route, navigation }) {
       load();
     }, [load])
   );
+
+  const graphData = useMemo(() => {
+    const full = buildFullDayList(dayByDay);
+    return groupByYearMonth(full);
+  }, [dayByDay]);
 
   const openMatch = useCallback(
     (matchId) => {
@@ -61,10 +175,14 @@ export default function MatchupStatsScreen({ route, navigation }) {
     return <Text style={styles.loading}>Loading…</Text>;
   }
 
-  const title = [player1Name, player2Name].filter(Boolean).join(' vs ') || 'Matchup';
-
   return (
     <View style={styles.container}>
+      <ImageBackground
+        source={require('../../media/tennis.jpg')}
+        style={styles.backgroundImage}
+        resizeMode="cover"
+      >
+        <View style={styles.backgroundOverlay} />
       {/* Tab bar */}
       <View style={styles.tabBarWrap}>
         <View style={styles.tabBar}>
@@ -100,12 +218,12 @@ export default function MatchupStatsScreen({ route, navigation }) {
 
       {activeTab === 'matches' ? (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.h2hBox}>
-            <Text style={styles.h2hLabel}>Head-to-head (days)</Text>
-            <Text style={styles.h2hScore}>
-              {player1Name} {h2h.wins} – {h2h.losses} {player2Name}
-            </Text>
-          </View>
+          <UnifiedTopBar
+            player1Name={player1Name}
+            player2Name={player2Name}
+            setsPlayer1={detailedStats?.setsPlayer1}
+            setsPlayer2={detailedStats?.setsPlayer2}
+          />
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Days played</Text>
             <TouchableOpacity style={styles.addDayBtn} onPress={handleAddDay}>
@@ -128,147 +246,164 @@ export default function MatchupStatsScreen({ route, navigation }) {
         </ScrollView>
       ) : activeTab === 'stats' ? (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.h2hBox}>
-            <Text style={styles.h2hLabel}>Head-to-head (days)</Text>
-            <Text style={styles.h2hScore}>
-              {player1Name} {h2h.wins} – {h2h.losses} {player2Name}
-            </Text>
-          </View>
-          <Text style={styles.sectionTitle}>Detailed stats</Text>
-          <View style={styles.statsTable}>
+          <UnifiedTopBar
+            player1Name={player1Name}
+            player2Name={player2Name}
+            setsPlayer1={detailedStats?.setsPlayer1}
+            setsPlayer2={detailedStats?.setsPlayer2}
+          />
+          <View style={styles.statsTableGlass}>
             <View style={styles.tableHeader}>
-              <Text style={styles.tableHeaderMetric}>Metric</Text>
-              <Text style={styles.tableHeaderValue}>Value</Text>
+              <Text style={styles.tableHeaderTableName}>Activity & Volume</Text>
+              <View style={styles.tableHeaderValueWrap}>
+                <Text style={[styles.tableHeaderValueP1, { color: COLOR_PLAYER1 }]}>P1</Text>
+                <Text style={styles.tableHeaderValueDash}> – </Text>
+                <Text style={[styles.tableHeaderValueP2, { color: COLOR_PLAYER2 }]}>P2</Text>
+              </View>
             </View>
             <StatTableRow metric="Total days played" value={detailedStats?.totalDaysPlayed ?? '—'} />
             <StatTableRow metric="Total sets played" value={detailedStats?.totalSetsPlayed ?? '—'} />
+            <StatTableRow metric="Total games played" value={detailedStats?.totalGamesPlayed ?? '—'} />
+            <StatTableRow metric="Incomplete sets" value={detailedStats?.incompleteSets ?? '—'} />
             <StatTableRow metric="Most sets in a single day" value={detailedStats?.mostSetsInSingleDay ?? '—'} />
+            <StatTableRow metric="Most sets in a week" value={detailedStats?.mostSetsInWeek ?? '—'} />
+            <StatTableRow metric="Most sets in a month" value={detailedStats?.mostSetsInMonth ?? '—'} />
+          </View>
+
+          <View style={[styles.statsTableGlass, styles.statsTableGlassSecond]}>
+            <View style={styles.tableHeader}>
+              <Text style={styles.tableHeaderTableName}>Performance & Competitiveness</Text>
+              <View style={styles.tableHeaderValueWrap}>
+                <Text style={[styles.tableHeaderValueP1, { color: COLOR_PLAYER1 }]}>P1</Text>
+                <Text style={styles.tableHeaderValueDash}> – </Text>
+                <Text style={[styles.tableHeaderValueP2, { color: COLOR_PLAYER2 }]}>P2</Text>
+              </View>
+            </View>
             <StatTableRow
               metric="Set head-to-head"
-              value={
-                detailedStats
-                  ? `${player1Name} ${detailedStats.setsPlayer1} – ${detailedStats.setsPlayer2} ${player2Name}`
-                  : '—'
-              }
+              valueP1={detailedStats != null ? String(detailedStats.setsPlayer1) : null}
+              valueP2={detailedStats != null ? String(detailedStats.setsPlayer2) : null}
+            />
+            <StatTableRow
+              metric="Games head-to-head"
+              valueP1={detailedStats != null ? String(detailedStats.gamesPlayer1) : null}
+              valueP2={detailedStats != null ? String(detailedStats.gamesPlayer2) : null}
             />
             <StatTableRow
               metric="Set win %"
-              value={
-                detailedStats
-                  ? `${player1Name} ${(detailedStats.setWinPctPlayer1 ?? 0).toFixed(1)}% – ${(detailedStats.setWinPctPlayer2 ?? 0).toFixed(1)}% ${player2Name}`
-                  : '—'
-              }
-            />
-            <StatTableRow
-              metric="Day win %"
-              value={
-                detailedStats
-                  ? `${player1Name} ${(detailedStats.dayWinPctPlayer1 ?? 0).toFixed(1)}% – ${(detailedStats.dayWinPctPlayer2 ?? 0).toFixed(1)}% ${player2Name}`
-                  : '—'
-              }
-            />
-            <StatTableRow metric="Total games played" value={detailedStats?.totalGamesPlayed ?? '—'} />
-            <StatTableRow
-              metric="Games head-to-head"
-              value={
-                detailedStats
-                  ? `${player1Name} ${detailedStats.gamesPlayer1} – ${detailedStats.gamesPlayer2} ${player2Name}`
-                  : '—'
-              }
-            />
-            <StatTableRow metric="Average set score (P1 – P2)" value={detailedStats?.averageSetScore ?? '—'} />
-            <StatTableRow
-              metric="Avg win margin when winning"
-              value={
-                detailedStats
-                  ? [detailedStats.avgWinMarginPlayer1, detailedStats.avgWinMarginPlayer2]
-                      .every((x) => x != null)
-                    ? `${player1Name} ${detailedStats.avgWinMarginPlayer1} – ${detailedStats.avgWinMarginPlayer2} ${player2Name}`
-                    : detailedStats.avgWinMarginPlayer1 != null
-                      ? `${player1Name} ${detailedStats.avgWinMarginPlayer1}`
-                      : detailedStats.avgWinMarginPlayer2 != null
-                        ? `${player2Name} ${detailedStats.avgWinMarginPlayer2}`
-                        : '—'
-                  : '—'
-              }
+              valueP1={detailedStats != null ? `${(detailedStats.setWinPctPlayer1 ?? 0).toFixed(1)}%` : null}
+              valueP2={detailedStats != null ? `${(detailedStats.setWinPctPlayer2 ?? 0).toFixed(1)}%` : null}
             />
             <StatTableRow
               metric="Current win streak"
-              value={
-                detailedStats
-                  ? `${player1Name} ${detailedStats.currentWinStreakPlayer1 ?? 0} – ${detailedStats.currentWinStreakPlayer2 ?? 0} ${player2Name}`
-                  : '—'
-              }
+              valueP1={detailedStats != null ? String(detailedStats.currentWinStreakPlayer1 ?? 0) : null}
+              valueP2={detailedStats != null ? String(detailedStats.currentWinStreakPlayer2 ?? 0) : null}
             />
             <StatTableRow
               metric="Best win streak"
-              value={
-                detailedStats
-                  ? `${player1Name} ${detailedStats.bestWinStreakPlayer1 ?? 0} – ${detailedStats.bestWinStreakPlayer2 ?? 0} ${player2Name}`
-                  : '—'
+              valueP1={detailedStats != null ? String(detailedStats.bestWinStreakPlayer1 ?? 0) : null}
+              valueP2={detailedStats != null ? String(detailedStats.bestWinStreakPlayer2 ?? 0) : null}
+            />
+            <StatTableRow metric="Closest set" valueScore={detailedStats?.closestSet} />
+            <StatTableRow metric="Easiest set" valueScore={detailedStats?.easiestSet} />
+            <StatTableRow metric="Average set score" valueScore={detailedStats?.averageSetScore} />
+            <StatTableRow
+              metric="Average win margin"
+              valueP1={
+                detailedStats != null && detailedStats.avgWinMarginPlayer1 != null
+                  ? String(detailedStats.avgWinMarginPlayer1)
+                  : null
               }
+              valueP2={
+                detailedStats != null && detailedStats.avgWinMarginPlayer2 != null
+                  ? String(detailedStats.avgWinMarginPlayer2)
+                  : null
+              }
+              fallback={detailedStats != null && detailedStats.avgWinMarginPlayer1 == null && detailedStats.avgWinMarginPlayer2 == null ? '—' : undefined}
             />
             <StatTableRow
               metric="Bagels served (6–0)"
-              value={
-                detailedStats
-                  ? `${player1Name} ${detailedStats.bagelsServedPlayer1 ?? 0} – ${detailedStats.bagelsServedPlayer2 ?? 0} ${player2Name}`
-                  : '—'
-              }
+              valueP1={detailedStats != null ? String(detailedStats.bagelsServedPlayer1 ?? 0) : null}
+              valueP2={detailedStats != null ? String(detailedStats.bagelsServedPlayer2 ?? 0) : null}
             />
             <StatTableRow
               metric="Breadsticks (6–1)"
-              value={
-                detailedStats
-                  ? `${player1Name} ${detailedStats.breadsticksServedPlayer1 ?? 0} – ${detailedStats.breadsticksServedPlayer2 ?? 0} ${player2Name}`
-                  : '—'
-              }
+              valueP1={detailedStats != null ? String(detailedStats.breadsticksServedPlayer1 ?? 0) : null}
+              valueP2={detailedStats != null ? String(detailedStats.breadsticksServedPlayer2 ?? 0) : null}
             />
-            <StatTableRow metric="Closest set" value={detailedStats?.closestSet ?? '—'} />
-            <StatTableRow metric="Easiest set" value={detailedStats?.easiestSet ?? '—'} />
             <StatTableRow metric="Tie breaks played" value={detailedStats?.tieBreaksPlayed ?? '—'} />
           </View>
         </ScrollView>
       ) : activeTab === 'graph' ? (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.graphContent} showsVerticalScrollIndicator={false}>
-          <View style={styles.h2hBox}>
-            <Text style={styles.h2hLabel}>Sets per day</Text>
-            <View style={styles.graphLegendRow}>
-              <Text style={styles.legendGreen}>■ {player1Name}</Text>
-              <Text style={styles.legendRed}>■ {player2Name}</Text>
-            </View>
-          </View>
-          {dayByDay.length === 0 ? (
-            <Text style={styles.hint}>No days yet. Play matches to see the graph.</Text>
-          ) : (
-            <View style={styles.graphBlock}>
-              {dayByDay.map((day, i) => (
-                <TouchableOpacity
-                  key={day.matchId || i}
-                  style={styles.graphRow}
-                  onPress={() => navigation.navigate('MatchDetail', { matchId: day.matchId })}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.graphDate} numberOfLines={1}>{day.date || 'No date'}</Text>
-                  <View style={styles.graphBarWrap}>
-                    <View style={styles.graphBar}>
-                      {(day.setsPlayer1 || 0) + (day.setsPlayer2 || 0) === 0 ? (
-                        <View style={[styles.graphBarSegment, styles.graphBarEmpty, { flex: 1 }]} />
-                      ) : (
-                        <View style={styles.graphBarSegments}>
-                          <View style={[styles.graphBarSegment, styles.graphBarGreen, { flex: day.setsPlayer1 || 0 }]} />
-                          <View style={[styles.graphBarSegment, styles.graphBarRed, { flex: day.setsPlayer2 || 0 }]} />
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.graphBarLabel}>{day.setsPlayer1}–{day.setsPlayer2}</Text>
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.graphContent} showsVerticalScrollIndicator={false}>
+            <UnifiedTopBar
+              player1Name={player1Name}
+              player2Name={player2Name}
+              setsPlayer1={detailedStats?.setsPlayer1}
+              setsPlayer2={detailedStats?.setsPlayer2}
+            />
+            {graphData.length === 0 ? (
+              <Text style={styles.hintGlass}>No days yet. Play matches to see the graph.</Text>
+            ) : (
+              <>
+                {graphData.map(({ year, months }) => (
+                  <View key={year} style={styles.graphYearBlock}>
+                    {months.map(({ monthLabel, monthLabelFull, days }) => (
+                      <View key={`${year}-${monthLabel}`} style={styles.graphMonthCard}>
+                        <Text style={styles.graphMonthTitle}>{monthLabelFull} {year}</Text>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.graphXAxisWrap}
+                        >
+                          {days.map((day) => {
+                            const totalSets = day.setsPlayer1 + day.setsPlayer2;
+                            const hasIncomplete = day.hasIncompleteSets;
+                            const barHeight = (totalSets > 0 || hasIncomplete)
+                              ? (totalSets + (hasIncomplete ? 1 : 0)) * BAR_HEIGHT_PER_SET
+                              : 0;
+                            const dayNum = day.date.getDate();
+                            const dayName = DAY_NAMES[day.date.getDay()];
+                            return (
+                              <TouchableOpacity
+                                key={day.dateStr}
+                                style={styles.graphDayColumn}
+                                onPress={day.matchId ? () => navigation.navigate('MatchDetail', { matchId: day.matchId }) : undefined}
+                                activeOpacity={day.matchId ? 0.8 : 1}
+                                disabled={!day.matchId}
+                              >
+                                <View style={styles.graphDayBarColumn}>
+                                  {(totalSets > 0 || hasIncomplete) && (
+                                    <View style={[styles.graphVerticalBar, { height: barHeight }]}>
+                                      {hasIncomplete && totalSets === 0 ? (
+                                        <View style={[styles.graphVerticalSegment, styles.graphBarYellow, { height: BAR_HEIGHT_PER_SET }]} />
+                                      ) : (
+                                        <>
+                                          <View style={[styles.graphVerticalSegment, styles.graphBarPlayer1, { height: (day.setsPlayer1 || 0) * BAR_HEIGHT_PER_SET }]} />
+                                          <View style={[styles.graphVerticalSegment, styles.graphBarPlayer2, { height: (day.setsPlayer2 || 0) * BAR_HEIGHT_PER_SET }]} />
+                                          {hasIncomplete && (
+                                            <View style={[styles.graphVerticalSegment, styles.graphBarYellow, { height: BAR_HEIGHT_PER_SET }]} />
+                                          )}
+                                        </>
+                                      )}
+                                    </View>
+                                  )}
+                                </View>
+                                <Text style={styles.graphXAxisLabel}>{dayNum}</Text>
+                                <Text style={styles.graphXAxisDay}>{dayName}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                    ))}
                   </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </ScrollView>
+                ))}
+              </>
+            )}
+          </ScrollView>
       ) : null}
+      </ImageBackground>
     </View>
   );
 }
@@ -276,20 +411,22 @@ export default function MatchupStatsScreen({ route, navigation }) {
 function MatchRow({ match, player1Id, player2Id, onPress }) {
   const [result, setResult] = useState(null);
   React.useEffect(() => {
+    if (!match?.id) return;
     let cancelled = false;
     getMatchResult(match.id).then((r) => {
       if (!cancelled) setResult(r);
     });
     return () => { cancelled = true; };
-  }, [match.id]);
+  }, [match?.id]);
 
+  if (!match) return null;
   const dateLabel = match.date_played || 'No date';
   const scoreLabel = result
     ? `${result.setsPlayer1}-${result.setsPlayer2} sets`
     : '—';
 
   return (
-    <TouchableOpacity style={styles.matchRow} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity style={styles.matchRowGlass} onPress={onPress} activeOpacity={0.7}>
       <Text style={styles.matchDate}>{dateLabel}</Text>
       <Text style={styles.matchScore}>{scoreLabel}</Text>
       <Text style={styles.matchChevron}>›</Text>
@@ -297,17 +434,37 @@ function MatchRow({ match, player1Id, player2Id, onPress }) {
   );
 }
 
-function StatTableRow({ metric, value }) {
+function StatTableRow({ metric, value, valueP1, valueP2, valueScore, fallback }) {
+  const parsed = valueScore != null ? valueScore.split(/\s*[–-]\s*/) : [];
+  const p1 = valueP1 ?? (parsed[0] != null && parsed[0].trim() !== '' ? parsed[0].trim() : null);
+  const p2 = valueP2 ?? (parsed[1] != null && parsed[1].trim() !== '' ? parsed[1].trim() : null);
+  const hasAnyP1P2 = p1 != null || p2 != null;
+  const displayNeutral = !hasAnyP1P2 ? (value ?? fallback ?? '—') : null;
   return (
     <View style={styles.tableRow}>
       <Text style={styles.tableMetric}>{metric}</Text>
-      <Text style={styles.tableValue}>{value}</Text>
+      <View style={styles.tableValueWrap}>
+        {hasAnyP1P2 ? (
+          <>
+            <Text style={[styles.tableValueP1, { color: COLOR_PLAYER1 }]}>{p1 ?? '—'}</Text>
+            <Text style={styles.tableValueDash}> – </Text>
+            <Text style={[styles.tableValueP2, { color: COLOR_PLAYER2 }]}>{p2 ?? '—'}</Text>
+          </>
+        ) : (
+          <Text style={styles.tableValueNeutral}>{displayNeutral}</Text>
+        )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f0' },
+  container: { flex: 1, backgroundColor: '#1a2e1a' },
+  backgroundImage: { flex: 1 },
+  backgroundOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
   tabBarWrap: {
     paddingHorizontal: 20,
     paddingTop: 8,
@@ -318,12 +475,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     width: '100%',
     maxWidth: 340,
-    backgroundColor: '#e8ece8',
+    backgroundColor: 'rgba(255,255,255,0.25)',
     borderRadius: 14,
     padding: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.12,
     shadowRadius: 8,
     elevation: 4,
   },
@@ -345,26 +504,33 @@ const styles = StyleSheet.create({
   tabSegmentInactive: { backgroundColor: 'transparent' },
   tabText: { fontSize: 15, fontWeight: '600' },
   tabTextActive: { color: '#fff' },
-  tabTextInactive: { color: '#5a6a5a' },
+  tabTextInactive: { color: 'rgba(255,255,255,0.9)' },
   scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
-  loading: { padding: 24, textAlign: 'center', color: '#666' },
-  h2hBox: {
-    backgroundColor: '#fff',
+  loading: { padding: 24, textAlign: 'center', color: 'rgba(255,255,255,0.9)' },
+  h2hBoxGlass: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
     padding: 16,
     alignItems: 'center',
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  h2hLabel: { fontSize: 12, color: '#666', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
-  h2hScore: { fontSize: 17, fontWeight: '700', color: '#1a1a1a', textAlign: 'center' },
+  h2hLabelGlass: { fontSize: 12, color: '#1a472a', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '700' },
+  unifiedLegendRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6, gap: 12, justifyContent: 'center' },
+  h2hScoreRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  h2hScoreGlass: { fontSize: 20, fontWeight: '700' },
+  h2hScoreDash: { fontSize: 20, fontWeight: '700', color: '#555', marginHorizontal: 4 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1a472a', marginBottom: 12 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#fff', marginBottom: 12, textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  tableHeaderTableName: { flex: 1, fontSize: 13, fontWeight: '700', color: '#1a472a', textTransform: 'uppercase', letterSpacing: 0.3 },
+  statsTableGlassSecond: { marginTop: 16 },
   addDayBtn: {
     backgroundColor: '#1a472a',
     paddingVertical: 8,
@@ -372,26 +538,38 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   addDayText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  hint: { color: '#666', fontSize: 15, marginBottom: 16 },
-  matchRow: {
+  hint: { color: 'rgba(255,255,255,0.9)', fontSize: 15, marginBottom: 16, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  matchRowGlass: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 12,
     padding: 14,
     marginBottom: 8,
     borderLeftWidth: 4,
     borderLeftColor: '#1a472a',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
   },
   matchDate: { fontSize: 15, color: '#333', flex: 1 },
   matchScore: { fontSize: 14, color: '#666', marginRight: 8 },
   matchChevron: { fontSize: 18, color: '#1a472a', fontWeight: '700' },
-  statsTable: {
-    backgroundColor: '#fff',
+  statsTableGlass: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#e0e8e0',
+    borderColor: 'rgba(255,255,255,0.85)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
   },
   tableHeader: {
     flexDirection: 'row',
@@ -399,38 +577,76 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderBottomWidth: 2,
     borderBottomColor: '#1a472a',
-    backgroundColor: '#f4f8f4',
+    backgroundColor: 'rgba(255,255,255,0.5)',
   },
-  tableHeaderMetric: { flex: 1, fontSize: 13, fontWeight: '700', color: '#1a472a', textTransform: 'uppercase', letterSpacing: 0.3 },
-  tableHeaderValue: { flex: 1, fontSize: 13, fontWeight: '700', color: '#1a472a', textTransform: 'uppercase', letterSpacing: 0.3, textAlign: 'right' },
+  tableHeaderMetric: { flex: 1, fontSize: 13, fontWeight: '700', color: COLOR_NEUTRAL, textTransform: 'uppercase', letterSpacing: 0.3 },
+  tableHeaderValueWrap: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
+  tableHeaderValueP1: { fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
+  tableHeaderValueDash: { fontSize: 13, fontWeight: '700', color: '#555' },
+  tableHeaderValueP2: { fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
   tableRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#edf2ec',
+    borderBottomColor: 'rgba(0,0,0,0.06)',
   },
-  tableMetric: { flex: 1, fontSize: 14, color: '#333' },
-  tableValue: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1a472a', textAlign: 'right' },
+  tableMetric: { flex: 1, fontSize: 14, fontWeight: '700', color: '#1a472a' },
+  tableValueWrap: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
+  tableValueP1: { fontSize: 14, fontWeight: '600' },
+  tableValueDash: { fontSize: 14, fontWeight: '600', color: '#555' },
+  tableValueP2: { fontSize: 14, fontWeight: '600' },
+  tableValueNeutral: { fontSize: 14, fontWeight: '600', color: COLOR_NEUTRAL },
   graphContent: { padding: 16, paddingBottom: 40 },
-  graphLegendRow: { flexDirection: 'row', marginTop: 6, gap: 16 },
-  legendGreen: { fontSize: 13, color: '#1a472a' },
-  legendRed: { fontSize: 13, color: '#b91c1c' },
-  graphBlock: { backgroundColor: '#fff', borderRadius: 14, overflow: 'hidden', padding: 12, borderWidth: 1, borderColor: '#e0e8e0' },
-  graphRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-    gap: 10,
+  legendPlayer1: { fontSize: 13, color: COLOR_PLAYER1, fontWeight: '600' },
+  legendPlayer2: { fontSize: 13, color: COLOR_PLAYER2, fontWeight: '600' },
+  hintGlass: { color: 'rgba(255,255,255,0.95)', fontSize: 15, marginBottom: 16, textShadowColor: 'rgba(0,0,0,0.4)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  graphYearBlock: { marginBottom: 20 },
+  graphMonthCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3,
+    overflow: 'hidden',
   },
-  graphDate: { width: 72, fontSize: 13, color: '#333' },
-  graphBarWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  graphBar: { flex: 1, height: 24, borderRadius: 6, overflow: 'hidden', backgroundColor: '#eee' },
-  graphBarSegments: { flex: 1, flexDirection: 'row', height: '100%' },
-  graphBarSegment: { minWidth: 2 },
-  graphBarGreen: { backgroundColor: '#1a472a' },
-  graphBarRed: { backgroundColor: '#b91c1c' },
-  graphBarEmpty: { backgroundColor: '#ccc' },
-  graphBarLabel: { fontSize: 12, fontWeight: '600', color: '#555', minWidth: 28 },
+  graphMonthTitle: { fontSize: 16, fontWeight: '700', color: '#1a472a', marginBottom: 10, paddingLeft: 2 },
+  graphXAxisWrap: { paddingVertical: 8, paddingRight: 16, flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+  graphDayColumn: {
+    width: DAY_COLUMN_WIDTH,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    minHeight: 56,
+  },
+  graphDayBarColumn: {
+    minHeight: 32,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginBottom: 4,
+  },
+  graphVerticalBar: {
+    flexDirection: 'column-reverse',
+    width: 14,
+    borderRadius: 4,
+    overflow: 'hidden',
+    minHeight: 2,
+  },
+  graphVerticalSegment: {
+    width: '100%',
+    minHeight: 2,
+  },
+  graphBarPlayer1: { backgroundColor: COLOR_PLAYER1 },
+  graphBarPlayer2: { backgroundColor: COLOR_PLAYER2 },
+  graphBarYellow: { backgroundColor: '#c0840c' },
+  legendYellow: { fontSize: 13, color: '#c0840c', fontWeight: '600' },
+  graphXAxisLabel: { fontSize: 11, fontWeight: '600', color: '#333' },
+  graphXAxisDay: { fontSize: 9, color: '#666', marginTop: 1 },
 });

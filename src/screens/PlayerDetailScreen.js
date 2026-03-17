@@ -171,6 +171,7 @@ export default function PlayerDetailScreen({ route, navigation }) {
             <StatRow label="Best win streak" value={stats.bestWinStreak ?? 0} />
             <StatRow label="Bagels served (6–0)" value={stats.bagelsServed ?? 0} />
             <StatRow label="Breadsticks (6–1)" value={stats.breadsticksServed ?? 0} />
+            <StatRow label="Incomplete sets" value={stats.incompleteSets ?? 0} />
           </View>
         )}
       </View>
@@ -317,6 +318,7 @@ function StatRow({ label, value }) {
 }
 
 function MatchRow({ match, opponent, isPlayer1, playerId, onPress }) {
+  if (!match) return null;
   const result = match.result;
   if (!result) {
     return (

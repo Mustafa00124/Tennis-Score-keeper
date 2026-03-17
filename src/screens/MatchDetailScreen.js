@@ -12,6 +12,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { getMatchWithDetails, updateMatch, getSetScoresForMatch } from '../db/database';
+import { gamesInValidRange, setNeedsTiebreak, isSetValidForSave, isSetComplete } from '../utils/tennisScoring';
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
@@ -19,7 +20,7 @@ export default function MatchDetailScreen({ route, navigation }) {
   const { matchId } = route.params || {};
   const [detail, setDetail] = useState(null);
   const [datePlayed, setDatePlayed] = useState('');
-  const [sets, setSets] = useState([{ gamesPlayer1: '', gamesPlayer2: '' }]);
+  const [sets, setSets] = useState([{ gamesPlayer1: '', gamesPlayer2: '', tiebreakPlayer1: '', tiebreakPlayer2: '' }]);
   const [remarks, setRemarks] = useState('');
   const [images, setImages] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -38,10 +39,12 @@ export default function MatchDetailScreen({ route, navigation }) {
           existing.map((s) => ({
             gamesPlayer1: String(s.games_player1 ?? ''),
             gamesPlayer2: String(s.games_player2 ?? ''),
+            tiebreakPlayer1: s.tiebreak_player1 != null ? String(s.tiebreak_player1) : '',
+            tiebreakPlayer2: s.tiebreak_player2 != null ? String(s.tiebreak_player2) : '',
           }))
         );
       } else {
-        setSets([{ gamesPlayer1: '', gamesPlayer2: '' }]);
+        setSets([{ gamesPlayer1: '', gamesPlayer2: '', tiebreakPlayer1: '', tiebreakPlayer2: '' }]);
       }
     }
   }, [matchId]);
@@ -53,7 +56,7 @@ export default function MatchDetailScreen({ route, navigation }) {
   );
 
   const addSet = useCallback(() => {
-    setSets((s) => [...s, { gamesPlayer1: '', gamesPlayer2: '' }]);
+    setSets((s) => [...s, { gamesPlayer1: '', gamesPlayer2: '', tiebreakPlayer1: '', tiebreakPlayer2: '' }]);
   }, []);
 
   const removeSet = useCallback((index) => {
@@ -65,6 +68,10 @@ export default function MatchDetailScreen({ route, navigation }) {
     setSets((prev) => {
       const next = [...prev];
       next[index] = { ...next[index], [field]: value };
+      if (field === 'gamesPlayer1' || field === 'gamesPlayer2') {
+        const g = parseInt(value, 10);
+        if (Number.isInteger(g) && g > 7) next[index][field] = '7';
+      }
       return next;
     });
   }, []);
@@ -99,7 +106,15 @@ export default function MatchDetailScreen({ route, navigation }) {
         const a = s.gamesPlayer1 === '' ? null : parseInt(s.gamesPlayer1, 10);
         const b = s.gamesPlayer2 === '' ? null : parseInt(s.gamesPlayer2, 10);
         if (a == null || b == null || !Number.isInteger(a) || !Number.isInteger(b)) return null;
-        return { gamesPlayer1: a, gamesPlayer2: b };
+        if (!gamesInValidRange(a, b)) return null;
+        const tb1 = s.tiebreakPlayer1 === '' ? undefined : s.tiebreakPlayer1;
+        const tb2 = s.tiebreakPlayer2 === '' ? undefined : s.tiebreakPlayer2;
+        return {
+          gamesPlayer1: a,
+          gamesPlayer2: b,
+          tiebreakPlayer1: tb1,
+          tiebreakPlayer2: tb2,
+        };
       })
       .filter((s) => s != null && (s.gamesPlayer1 > 0 || s.gamesPlayer2 > 0));
   }, [sets]);
@@ -108,14 +123,31 @@ export default function MatchDetailScreen({ route, navigation }) {
     if (!matchId) return;
     const validSets = getValidSets();
     if (validSets.length === 0) {
-      Alert.alert('Add at least one set', 'Enter set scores (e.g. 6–4) with a clear winner.');
+      Alert.alert('Add at least one set', 'Games must be 0–7. For 7–6 or 6–7 add tiebreak score.');
       return;
     }
-    const p1Sets = validSets.filter((s) => s.gamesPlayer1 > s.gamesPlayer2).length;
-    const p2Sets = validSets.filter((s) => s.gamesPlayer2 > s.gamesPlayer1).length;
-    if (p1Sets === p2Sets) {
-      Alert.alert('No winner', 'One player must win more sets than the other.');
-      return;
+    for (let i = 0; i < validSets.length; i++) {
+      const s = sets[i];
+      if (!isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, s.tiebreakPlayer1, s.tiebreakPlayer2)) {
+        Alert.alert(
+          'Invalid set score',
+          setNeedsTiebreak(parseInt(s.gamesPlayer1, 10), parseInt(s.gamesPlayer2, 10))
+            ? 'Set 7–6 or 6–7 requires a tiebreak score (e.g. 7–4).'
+            : 'Use valid tennis set scores: 6–0 to 7–5, or 7–6/6–7 with tiebreak.'
+        );
+        return;
+      }
+    }
+    const completedSets = validSets.filter((s) =>
+      isSetComplete(s.gamesPlayer1, s.gamesPlayer2, s.tiebreakPlayer1, s.tiebreakPlayer2)
+    );
+    if (completedSets.length > 0) {
+      const p1Sets = completedSets.filter((s) => s.gamesPlayer1 > s.gamesPlayer2).length;
+      const p2Sets = completedSets.filter((s) => s.gamesPlayer2 > s.gamesPlayer1).length;
+      if (p1Sets === p2Sets) {
+        Alert.alert('No winner', 'One player must win more completed sets than the other.');
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -159,40 +191,72 @@ export default function MatchDetailScreen({ route, navigation }) {
 
       <View style={styles.section}>
         <View style={styles.setHeader}>
-          <Text style={styles.label}>Set scores</Text>
+          <Text style={styles.label}>Set scores (games 0–7)</Text>
           <TouchableOpacity onPress={addSet} style={styles.addSetLink}>
             <Text style={styles.addSetLinkText}>+ Add set</Text>
           </TouchableOpacity>
         </View>
-        {sets.map((set, i) => (
-          <View key={i} style={styles.setRow}>
-            <Text style={styles.setNum}>Set {i + 1}</Text>
-            <TextInput
-              style={styles.setInput}
-              keyboardType="number-pad"
-              maxLength={2}
-              value={set.gamesPlayer1}
-              onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer1', t)}
-              placeholder={detail.player1_name?.slice(0, 4) || 'P1'}
-              placeholderTextColor="#999"
-            />
-            <Text style={styles.dash}>–</Text>
-            <TextInput
-              style={styles.setInput}
-              keyboardType="number-pad"
-              maxLength={2}
-              value={set.gamesPlayer2}
-              onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer2', t)}
-              placeholder={detail.player2_name?.slice(0, 4) || 'P2'}
-              placeholderTextColor="#999"
-            />
-            {sets.length > 1 && (
-              <TouchableOpacity onPress={() => removeSet(i)} style={styles.removeSet}>
-                <Text style={styles.removeSetText}>✕</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ))}
+        <Text style={styles.setHint}>7–6 or 6–7 requires tiebreak. Incomplete sets are saved but not counted in W/L.</Text>
+        {sets.map((set, i) => {
+          const g1 = set.gamesPlayer1 === '' ? null : parseInt(set.gamesPlayer1, 10);
+          const g2 = set.gamesPlayer2 === '' ? null : parseInt(set.gamesPlayer2, 10);
+          const needsTiebreak = Number.isInteger(g1) && Number.isInteger(g2) && setNeedsTiebreak(g1, g2);
+          return (
+            <View key={i} style={styles.setBlock}>
+              <View style={styles.setRow}>
+                <Text style={styles.setNum}>Set {i + 1}</Text>
+                <TextInput
+                  style={styles.setInput}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  value={set.gamesPlayer1}
+                  onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer1', t)}
+                  placeholder={detail.player1_name?.slice(0, 4) || 'P1'}
+                  placeholderTextColor="#999"
+                />
+                <Text style={styles.dash}>–</Text>
+                <TextInput
+                  style={styles.setInput}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  value={set.gamesPlayer2}
+                  onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'gamesPlayer2', t)}
+                  placeholder={detail.player2_name?.slice(0, 4) || 'P2'}
+                  placeholderTextColor="#999"
+                />
+                {sets.length > 1 && (
+                  <TouchableOpacity onPress={() => removeSet(i)} style={styles.removeSet}>
+                    <Text style={styles.removeSetText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {needsTiebreak && (
+                <View style={styles.tiebreakRow}>
+                  <Text style={styles.tiebreakLabel}>Tiebreak</Text>
+                  <TextInput
+                    style={styles.tiebreakInput}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    value={set.tiebreakPlayer1}
+                    onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'tiebreakPlayer1', t)}
+                    placeholder="7"
+                    placeholderTextColor="#999"
+                  />
+                  <Text style={styles.dash}>–</Text>
+                  <TextInput
+                    style={styles.tiebreakInput}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    value={set.tiebreakPlayer2}
+                    onChangeText={(t) => (t === '' || /^\d+$/.test(t)) && updateSet(i, 'tiebreakPlayer2', t)}
+                    placeholder="4"
+                    placeholderTextColor="#999"
+                  />
+                </View>
+              )}
+            </View>
+          );
+        })}
       </View>
 
       <View style={styles.section}>
@@ -256,11 +320,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1a1a1a',
   },
-  setHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  setHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   addSetLink: { padding: 8 },
   addSetLinkText: { color: '#1a472a', fontWeight: '600', fontSize: 14 },
-  setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 },
+  setHint: { fontSize: 12, color: '#666', marginBottom: 10 },
+  setBlock: { marginBottom: 12 },
+  setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
   setNum: { width: 44, fontSize: 14, color: '#666' },
+  tiebreakRow: { flexDirection: 'row', alignItems: 'center', marginLeft: 52, gap: 8, marginBottom: 4 },
+  tiebreakLabel: { width: 56, fontSize: 12, color: '#888' },
+  tiebreakInput: {
+    width: 44,
+    borderWidth: 1,
+    borderColor: '#c8d4c8',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    fontSize: 14,
+    textAlign: 'center',
+  },
   setInput: {
     width: 56,
     borderWidth: 1,

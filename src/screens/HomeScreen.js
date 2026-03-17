@@ -13,6 +13,7 @@ import {
   ImageBackground,
   Animated,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -25,6 +26,38 @@ import {
 } from '../db/database';
 
 const HEADER_HEIGHT = 56;
+
+/** From all matches (one per day), build unique matchup pairs (one per player pair). */
+function uniqueMatchupsFromMatches(matchList) {
+  if (!Array.isArray(matchList)) return [];
+  const byPair = {};
+  for (const m of matchList) {
+    if (!m || m.player1_id == null || m.player2_id == null) continue;
+    const id1 = m.player1_id;
+    const id2 = m.player2_id;
+    const key = id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`;
+    if (!byPair[key]) {
+      const p1Id = id1 < id2 ? id1 : id2;
+      const p2Id = id1 < id2 ? id2 : id1;
+      const p1Name = id1 < id2 ? m.player1_name : m.player2_name;
+      const p2Name = id1 < id2 ? m.player2_name : m.player1_name;
+      byPair[key] = {
+        player1_id: p1Id,
+        player2_id: p2Id,
+        player1_name: p1Name,
+        player2_name: p2Name,
+        lastPlayedDate: m.date_played || '',
+        matchCount: 0,
+      };
+    }
+    byPair[key].matchCount += 1;
+    const d = (m.date_played || '').slice(0, 10);
+    if (d && (!byPair[key].lastPlayedDate || d > byPair[key].lastPlayedDate.slice(0, 10))) {
+      byPair[key].lastPlayedDate = m.date_played || '';
+    }
+  }
+  return Object.values(byPair).sort((a, b) => (b.lastPlayedDate || '').localeCompare(a.lastPlayedDate || ''));
+}
 
 export default function HomeScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -45,9 +78,10 @@ export default function HomeScreen({ navigation }) {
       getAllPlayers(),
       getAllTournaments(),
     ]);
-    setMatches(matchList);
     setPlayers(playerList);
     setTournaments(tournamentList);
+    const matchups = uniqueMatchupsFromMatches(matchList);
+    setMatches(matchups);
     const stats = await Promise.all(
       playerList.map((p) => getPlayerStats(p.id).then((s) => ({ id: p.id, ...s })))
     );
@@ -176,21 +210,21 @@ export default function HomeScreen({ navigation }) {
             matches.length === 0 ? (
               <Text style={styles.emptyHint}>No match ups. Tap + to add.</Text>
             ) : (
-              matches.map((m) => (
+              matches.map((mu) => (
                 <MatchUpCard
-                  key={m.id}
-                  match={m}
+                  key={`${mu.player1_id}-${mu.player2_id}`}
+                  matchup={mu}
                   onPress={() =>
                     navigation.navigate('MatchupStats', {
-                      player1Id: m.player1_id,
-                      player2Id: m.player2_id,
-                      player1Name: m.player1_name,
-                      player2Name: m.player2_name,
+                      player1Id: mu.player1_id,
+                      player2Id: mu.player2_id,
+                      player1Name: mu.player1_name,
+                      player2Name: mu.player2_name,
                     })
                   }
                   onAddDay={async () => {
                     try {
-                      const newMatchId = await createMatchup(m.player1_id, m.player2_id);
+                      const newMatchId = await createMatchup(mu.player1_id, mu.player2_id);
                       navigation.navigate('MatchDetail', { matchId: newMatchId });
                     } catch (e) {
                       Alert.alert('Error', e.message || 'Could not add day');
@@ -320,65 +354,164 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-function ShiftingGradientOverlay() {
-  const translateX = useRef(new Animated.Value(-200)).current;
+/** Ripple timing: 0.5s between each of 3 ripples, then 2s pause. Cycle 5.2s so all three stay in sync. */
+const RIPPLE_DURATION = 4200;
+const RIPPLE_CYCLE = 5200;
+
+/** Ripple starts from a point at top-left corner (center at 0,0), with a short soft fade-in so it's not abrupt. */
+const RIPPLE_FADE_IN_MS = 220;
+const RIPPLE_EXPAND_DURATION = RIPPLE_DURATION - RIPPLE_FADE_IN_MS;
+
+/** Small green ripples from top-left: 3 overlapping ripples with 0.5s stagger, then 2s pause. */
+function GreenRippleOverlay() {
+  const s1 = useRef(new Animated.Value(0)).current;
+  const o1 = useRef(new Animated.Value(0)).current;
+  const s2 = useRef(new Animated.Value(0)).current;
+  const o2 = useRef(new Animated.Value(0)).current;
+  const s3 = useRef(new Animated.Value(0)).current;
+  const o3 = useRef(new Animated.Value(0)).current;
+
+  const runRipple = (scale, opacity) =>
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(scale, { toValue: 0.08, duration: RIPPLE_FADE_IN_MS, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.52, duration: RIPPLE_FADE_IN_MS, useNativeDriver: true }),
+      ]),
+      Animated.parallel([
+        Animated.timing(scale, { toValue: 2.8, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.06, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
+      ]),
+      Animated.parallel([
+        Animated.timing(scale, { toValue: 0, duration: 0, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ]),
+    ]);
+
   useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(translateX, {
-          toValue: 400,
-          duration: 5000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(translateX, {
-          toValue: -200,
-          duration: 0,
-          useNativeDriver: true,
-        }),
-      ])
+    const loop1 = Animated.loop(
+      Animated.sequence([runRipple(s1, o1), Animated.delay(RIPPLE_CYCLE - RIPPLE_DURATION)])
     );
-    animation.start();
-    return () => animation.stop();
-  }, [translateX]);
+    const loop2 = Animated.loop(
+      Animated.sequence([Animated.delay(500), runRipple(s2, o2), Animated.delay(RIPPLE_CYCLE - 500 - RIPPLE_DURATION)])
+    );
+    const loop3 = Animated.loop(
+      Animated.sequence([Animated.delay(1000), runRipple(s3, o3), Animated.delay(RIPPLE_CYCLE - 1000 - RIPPLE_DURATION)])
+    );
+    loop1.start();
+    loop2.start();
+    loop3.start();
+    return () => {
+      loop1.stop();
+      loop2.stop();
+      loop3.stop();
+    };
+  }, [s1, o1, s2, o2, s3, o3]);
+
   return (
     <View style={styles.gradientOverlayWrap} pointerEvents="none">
-      <Animated.View
-        style={[
-          styles.gradientOverlayStrip,
-          { transform: [{ translateX }] },
-        ]}
-      />
+      <Animated.View style={[styles.greenRippleCircle, { opacity: o1, transform: [{ scale: s1 }] }]} />
+      <Animated.View style={[styles.greenRippleCircle, { opacity: o2, transform: [{ scale: s2 }] }]} />
+      <Animated.View style={[styles.greenRippleCircle, { opacity: o3, transform: [{ scale: s3 }] }]} />
     </View>
   );
 }
 
-function MatchUpCard({ match, onPress, onAddDay }) {
-  const dateLabel = match.date_played || 'No date set';
+/** Liquid-style gradient overlay: gradient is larger than the card and drifts so the highlight visibly moves. */
+function LiquidGradientOverlay() {
+  const driftX = useRef(new Animated.Value(0)).current;
+  const driftY = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(driftX, {
+            toValue: 36,
+            duration: 5000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(driftY, {
+            toValue: 24,
+            duration: 5000,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.parallel([
+          Animated.timing(driftX, {
+            toValue: 0,
+            duration: 5000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(driftY, {
+            toValue: 0,
+            duration: 5000,
+            useNativeDriver: true,
+          }),
+        ]),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [driftX, driftY]);
+  return (
+    <View style={styles.gradientOverlayWrap} pointerEvents="none">
+      <Animated.View
+        style={[
+          styles.liquidGradientLayer,
+          {
+            transform: [
+              { translateX: driftX },
+              { translateY: driftY },
+            ],
+          },
+        ]}
+      >
+        <LinearGradient
+          colors={[
+            'transparent',
+            'rgba(255,255,255,0.06)',
+            'rgba(255,255,255,0.18)',
+            'rgba(255,255,255,0.08)',
+            'transparent',
+          ]}
+          locations={[0, 0.35, 0.5, 0.65, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+    </View>
+  );
+}
+
+function MatchUpCard({ matchup, onPress, onAddDay }) {
+  const dateLabel = matchup.lastPlayedDate ? matchup.lastPlayedDate.slice(0, 10) : 'No days yet';
+  const daysLabel = matchup.matchCount > 0 ? `${matchup.matchCount} day${matchup.matchCount !== 1 ? 's' : ''}` : null;
   return (
     <TouchableOpacity style={styles.matchCard} onPress={onPress} activeOpacity={0.7}>
-      <ShiftingGradientOverlay />
+      <GreenRippleOverlay />
+      <LiquidGradientOverlay />
       <View style={styles.matchCardInner}>
-      <View style={styles.matchCardHeader}>
-        <Text style={styles.matchCardVs} numberOfLines={2}>
-          {match.player1_name} vs {match.player2_name}
-        </Text>
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={(e) => {
-            e.stopPropagation();
-            onAddDay?.();
-          }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Text style={styles.addBtnText}>Add</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.matchCardDate}>{dateLabel}</Text>
-      {match.remarks ? (
-        <Text style={styles.matchCardRemarks} numberOfLines={1}>{match.remarks}</Text>
-      ) : null}
-      <Text style={styles.matchCardTap}>Tap for stats</Text>
-      </View>
+          <View style={styles.matchCardHeader}>
+            <Text style={styles.matchCardVs} numberOfLines={2}>
+              {matchup.player1_name} vs {matchup.player2_name}
+            </Text>
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={(e) => {
+                e.stopPropagation();
+                onAddDay?.();
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.addBtnText}>Add</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.matchCardDate}>Last played: {dateLabel}</Text>
+          {daysLabel ? (
+            <Text style={styles.matchCardRemarks} numberOfLines={1}>{daysLabel}</Text>
+          ) : null}
+          <Text style={styles.matchCardTap}>Tap for stats · Add for new day</Text>
+        </View>
     </TouchableOpacity>
   );
 }
@@ -389,10 +522,11 @@ function PlayerCard({ player, stats, onPress }) {
     : null;
   return (
     <TouchableOpacity style={styles.playerCard} onPress={onPress} activeOpacity={0.7}>
-      <ShiftingGradientOverlay />
+      <GreenRippleOverlay />
+      <LiquidGradientOverlay />
       <View style={styles.playerCardInner}>
-      <Text style={styles.playerCardName} numberOfLines={1}>{player.name}</Text>
-      {statLine ? <Text style={styles.playerCardStats} numberOfLines={1}>{statLine}</Text> : null}
+        <Text style={styles.playerCardName} numberOfLines={1}>{player.name}</Text>
+        {statLine ? <Text style={styles.playerCardStats} numberOfLines={1}>{statLine}</Text> : null}
       </View>
     </TouchableOpacity>
   );
@@ -404,12 +538,13 @@ function TournamentCard({ tournament, onPress }) {
   if (tournament.date) metaParts.push(tournament.date);
   return (
     <TouchableOpacity style={[styles.tournamentCard, isComplete && styles.tournamentCardComplete]} onPress={onPress} activeOpacity={0.7}>
-      <ShiftingGradientOverlay />
+      <GreenRippleOverlay />
+      <LiquidGradientOverlay />
       <View style={styles.tournamentCardInner}>
-      <Text style={styles.tournamentCardName} numberOfLines={1}>{tournament.name}</Text>
-      <Text style={styles.tournamentCardMeta} numberOfLines={1}>
-        {metaParts.join(' · ')}
-      </Text>
+        <Text style={styles.tournamentCardName} numberOfLines={1}>{tournament.name}</Text>
+        <Text style={styles.tournamentCardMeta} numberOfLines={1}>
+          {metaParts.join(' · ')}
+        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -506,13 +641,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderRadius: 14,
   },
-  gradientOverlayStrip: {
+  greenRippleCircle: {
     position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 200,
-    backgroundColor: 'rgba(255,255,255,0.14)',
+    left: -60,
+    top: -60,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(18, 85, 45, 0.38)',
+  },
+  liquidGradientLayer: {
+    position: 'absolute',
+    width: '200%',
+    height: '200%',
+    left: '-50%',
+    top: '-50%',
   },
   matchCardInner: { padding: 14 },
   matchCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 },
