@@ -120,12 +120,19 @@ export async function getDb() {
   try {
     await db.execAsync('ALTER TABLE set_scores ADD COLUMN tiebreak_player2 INTEGER');
   } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE tournaments ADD COLUMN format TEXT');
+  } catch (_) {}
   return db;
 }
 
 // --- Tournaments ---
 function isValidDrawSize(n) {
   return n >= 2 && n <= 64 && (n & (n - 1)) === 0;
+}
+
+function isValidRoundRobinSize(n) {
+  return n >= 2 && n <= 20;
 }
 
 export async function getAllTournaments() {
@@ -146,15 +153,17 @@ export async function createTournament(name, drawSize, opts = {}) {
   const database = await getDb();
   const trimmed = (name || '').trim();
   if (!trimmed) throw new Error('Tournament name is required');
-  const size = parseInt(drawSize, 10) || 8;
-  if (!isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
+  const format = opts.format === 'round_robin' ? 'round_robin' : 'knockout';
+  const size = parseInt(drawSize, 10) || (format === 'round_robin' ? 4 : 8);
+  if (format === 'knockout' && !isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
+  if (format === 'round_robin' && !isValidRoundRobinSize(size)) throw new Error('Number of players must be 2–20 for round robin');
   const date = (opts.date || '').trim() || null;
   const description = (opts.description || '').trim() || null;
   const remarks = (opts.remarks || '').trim() || null;
   const images = Array.isArray(opts.images) ? JSON.stringify(opts.images) : (opts.images || null);
   const result = await database.runAsync(
-    'INSERT INTO tournaments (name, status, draw_size, date, description, remarks, images) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [trimmed, 'ongoing', size, date, description, remarks, images]
+    'INSERT INTO tournaments (name, status, draw_size, format, date, description, remarks, images) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [trimmed, 'ongoing', size, format, date, description, remarks, images]
   );
   return result.lastInsertRowId;
 }
@@ -179,6 +188,10 @@ export async function updateTournament(tournamentId, updates = {}) {
     const img = updates.images;
     fields.push('images = ?');
     values.push(Array.isArray(img) ? JSON.stringify(img) : (img || null));
+  }
+  if (updates.format !== undefined) {
+    fields.push('format = ?');
+    values.push(updates.format);
   }
   if (!fields.length) return;
   values.push(tournamentId);
@@ -217,7 +230,70 @@ export async function getTournamentParticipants(tournamentId) {
   }));
 }
 
+/** Circle method: player 0 fixed, others rotate. Returns [{ round, i, j }] with i < j. */
+function roundRobinPairings(n) {
+  const pairs = [];
+  const rounds = n - 1;
+  const half = Math.floor(n / 2);
+  for (let r = 0; r < rounds; r++) {
+    pairs.push({ round: r, i: 0, j: r + 1 });
+    for (let k = 1; k < half; k++) {
+      const a = (r + k) % (n - 1) + 1;
+      const b = (r + n - 1 - k) % (n - 1) + 1;
+      pairs.push({ round: r, i: Math.min(a, b), j: Math.max(a, b) });
+    }
+  }
+  return pairs;
+}
+
+export async function setTournamentRoundRobinDraw(tournamentId, participantIdsBySlot) {
+  const database = await getDb();
+  const participants = await database.getAllAsync(
+    'SELECT id, slot FROM tournament_participants WHERE tournament_id = ? ORDER BY slot',
+    [tournamentId]
+  );
+  for (let slot = 0; slot < participantIdsBySlot.length; slot++) {
+    const participantId = participantIdsBySlot[slot];
+    if (participantId != null) {
+      await database.runAsync('UPDATE tournament_participants SET slot = ? WHERE id = ? AND tournament_id = ?', [
+        slot,
+        participantId,
+        tournamentId,
+      ]);
+    }
+  }
+  const ordered = await database.getAllAsync(
+    'SELECT id, slot FROM tournament_participants WHERE tournament_id = ? ORDER BY slot',
+    [tournamentId]
+  );
+  const slotToParticipant = ordered.map((p) => p.id);
+  const n = slotToParticipant.length;
+  if (n < 2) return;
+  await database.runAsync('DELETE FROM tournament_matches WHERE tournament_id = ?', [tournamentId]);
+  const pairings = roundRobinPairings(n);
+  let matchIndexInRoundByRound = {};
+  for (const pr of pairings) {
+    if (matchIndexInRoundByRound[pr.round] == null) matchIndexInRoundByRound[pr.round] = 0;
+    const matchIndexInRound = matchIndexInRoundByRound[pr.round]++;
+    await database.runAsync(
+      `INSERT INTO tournament_matches (tournament_id, round, match_index_in_round, player1_participant_id, player2_participant_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        tournamentId,
+        pr.round,
+        matchIndexInRound,
+        slotToParticipant[pr.i],
+        slotToParticipant[pr.j],
+      ]
+    );
+  }
+}
+
 export async function setTournamentDraw(tournamentId, participantIdsBySlot) {
+  const tournament = await getTournamentById(tournamentId);
+  if (tournament?.format === 'round_robin') {
+    return setTournamentRoundRobinDraw(tournamentId, participantIdsBySlot);
+  }
   const database = await getDb();
   for (let slot = 0; slot < participantIdsBySlot.length; slot++) {
     const participantId = participantIdsBySlot[slot];
@@ -229,7 +305,7 @@ export async function setTournamentDraw(tournamentId, participantIdsBySlot) {
       ]);
     }
   }
-  const drawSize = (await getTournamentById(tournamentId))?.draw_size ?? 8;
+  const drawSize = tournament?.draw_size ?? 8;
   const numFirstRoundMatches = drawSize / 2;
   await database.runAsync('DELETE FROM tournament_matches WHERE tournament_id = ?', [tournamentId]);
   const participants = await database.getAllAsync(
@@ -304,6 +380,8 @@ export async function setTournamentMatchWinner(tournamentMatchId, winnerParticip
     winnerParticipantId,
     tournamentMatchId,
   ]);
+  const tournament = await database.getFirstAsync('SELECT format FROM tournaments WHERE id = ?', [row.tournament_id]);
+  if (tournament?.format === 'round_robin') return;
   const nextRound = row.round - 1;
   if (nextRound < 0) {
     const t = await database.getFirstAsync('SELECT id FROM tournaments WHERE id = ?', [row.tournament_id]);

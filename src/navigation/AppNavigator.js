@@ -27,7 +27,7 @@ function HomeButton({ navigation }) {
 function HeaderTitleWithIcon() {
   return (
     <View style={styles.headerTitleWrap}>
-      <Image source={require('../../media/icon.jpg')} style={styles.headerIcon} />
+      <Image source={require('../../media/App-Icon.jpg')} style={styles.headerIcon} />
       <Text style={styles.headerTitleText}>AI Tennis Record Keeper</Text>
     </View>
   );

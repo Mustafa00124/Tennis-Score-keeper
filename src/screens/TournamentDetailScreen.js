@@ -46,20 +46,145 @@ const errorBoundaryStyles = StyleSheet.create({
 });
 
 const ROUND_LABELS = ['Final', 'Semi-final', 'Quarter-final', 'Round of 16', 'Round of 32'];
-const BRACKET_SLOT_HEIGHT = 20;
-const BRACKET_MATCH_HEIGHT = 52;
-const BRACKET_COLUMN_WIDTH = 130;
-const BRACKET_HALF_CARD = BRACKET_MATCH_HEIGHT / 2;
 
 function getRoundLabel(roundIndex, totalRounds) {
   const idx = totalRounds - 1 - roundIndex;
   return ROUND_LABELS[idx] ?? `Round ${roundIndex + 1}`;
 }
 
-/** Vertical position (from top) for match at (round, matchIndex) in a bracket with totalRounds. */
-function bracketSlotTop(round, matchIndex, totalRounds) {
-  const base = (2 * matchIndex + 1) * Math.pow(2, totalRounds - 1 - round) * BRACKET_SLOT_HEIGHT;
-  return Math.max(0, base - BRACKET_HALF_CARD);
+// ─── Knockout bracket layout constants ───────────────────────────────────────
+const BK_CARD_W = 152;
+const BK_CARD_H = 76;
+const BK_CONN_W = 52;          // width of the connector zone between columns
+const BK_COL_W = BK_CARD_W + BK_CONN_W;
+const BK_UNIT = 100;           // vertical slot height for one first-round match
+const BK_LINE = 2;
+const BK_LINE_COLOR = 'rgba(255,255,255,0.65)';
+
+/**
+ * Renders a tree-style knockout bracket.
+ *
+ * Layout maths (per round r, 0 = first round):
+ *   slotH  = totalH / numMatchesInRound
+ *   card   centred at (i + 0.5) * slotH
+ *   connector pair p: topCY=(2p+0.5)*slotH  botCY=(2p+1.5)*slotH  midCY=(2p+1)*slotH
+ */
+function KnockoutBracket({ matchesByRound, roundIndices, totalRounds, openMatchActions, h2hByMatchId }) {
+  if (!roundIndices.length) return null;
+  const numFirstRound = matchesByRound[roundIndices[0]]?.length || 0;
+  if (numFirstRound === 0) return null;
+
+  const totalH = numFirstRound * BK_UNIT;
+  const numCols = roundIndices.length;
+  const bracketW = numCols * BK_CARD_W + Math.max(0, numCols - 1) * BK_CONN_W;
+
+  const elements = [];
+
+  roundIndices.forEach((round, colIdx) => {
+    const roundMatches = (matchesByRound[round] || [])
+      .slice()
+      .sort((a, b) => (a.match_index_in_round ?? 0) - (b.match_index_in_round ?? 0));
+    const numMatches = roundMatches.length;
+    if (numMatches === 0) return;
+
+    const slotH = totalH / numMatches;
+    const colX = colIdx * BK_COL_W;
+
+    // ── Match cards ──────────────────────────────────────────────────────────
+    roundMatches.forEach((match, i) => {
+      const centerY = (i + 0.5) * slotH;
+      const cardTop = Math.round(centerY - BK_CARD_H / 2);
+      const hasWinner = !!match.winner_participant_id;
+      const p1Won = match.winner_participant_id === match.player1_participant_id;
+      const p2Won = match.winner_participant_id === match.player2_participant_id;
+      const h2h = h2hByMatchId[match.id];
+      const bothApp = match.player1_app_id && match.player2_app_id;
+
+      elements.push(
+        <TouchableOpacity
+          key={`card-${round}-${i}`}
+          style={{
+            position: 'absolute', left: colX, top: cardTop,
+            width: BK_CARD_W, minHeight: BK_CARD_H,
+            backgroundColor: 'rgba(255,255,255,0.78)',
+            borderRadius: 10, padding: 8,
+            borderLeftWidth: 3,
+            borderLeftColor: hasWinner ? '#1a472a' : 'rgba(180,200,180,0.7)',
+            borderTopWidth: 1, borderRightWidth: 1, borderBottomWidth: 1,
+            borderTopColor: 'rgba(255,255,255,0.9)',
+            borderRightColor: 'rgba(255,255,255,0.9)',
+            borderBottomColor: 'rgba(255,255,255,0.9)',
+            shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.13, shadowRadius: 3, elevation: 2,
+          }}
+          onPress={() => openMatchActions(match)}
+          activeOpacity={0.8}
+        >
+          <Text style={{ fontSize: 12, fontWeight: p1Won ? '700' : '400', color: p1Won ? '#1a472a' : '#1a1a1a' }} numberOfLines={1}>
+            {match.player1_name || 'TBD'}
+          </Text>
+          <Text style={{ fontSize: 10, color: '#aaa', marginVertical: 1 }}>vs</Text>
+          <Text style={{ fontSize: 12, fontWeight: p2Won ? '700' : '400', color: p2Won ? '#1a472a' : '#1a1a1a' }} numberOfLines={1}>
+            {match.player2_name || 'TBD'}
+          </Text>
+          {hasWinner && (
+            <Text style={{ fontSize: 10, color: '#1a472a', fontWeight: '600', marginTop: 3 }} numberOfLines={1}>
+              ✓ {p1Won ? match.player1_name : match.player2_name}
+            </Text>
+          )}
+          {bothApp && h2h && h2h.wins != null && (
+            <Text style={{ fontSize: 9, color: '#5a7a5a', marginTop: 1 }} numberOfLines={1}>
+              H2H {h2h.wins}–{h2h.losses}
+            </Text>
+          )}
+          {!hasWinner && (match.player1_name !== 'TBD' || match.player2_name !== 'TBD') && (
+            <Text style={{ fontSize: 9, color: '#aaa', marginTop: 2 }}>Tap to set winner</Text>
+          )}
+        </TouchableOpacity>
+      );
+    });
+
+    // ── Connector lines to next column ───────────────────────────────────────
+    if (colIdx < numCols - 1) {
+      const halfConn = BK_CONN_W / 2;
+      const numPairs = Math.floor(numMatches / 2);
+      for (let p = 0; p < numPairs; p++) {
+        const topCY = Math.round((2 * p + 0.5) * slotH);
+        const botCY = Math.round((2 * p + 1.5) * slotH);
+        const midCY = Math.round((topCY + botCY) / 2);
+        const cx = colX + BK_CARD_W;
+        // horizontal stub from right edge of top card
+        elements.push(<View key={`lth-${round}-${p}`} style={{ position: 'absolute', left: cx, top: topCY - 1, width: halfConn, height: BK_LINE, backgroundColor: BK_LINE_COLOR }} />);
+        // horizontal stub from right edge of bottom card
+        elements.push(<View key={`lbh-${round}-${p}`} style={{ position: 'absolute', left: cx, top: botCY - 1, width: halfConn, height: BK_LINE, backgroundColor: BK_LINE_COLOR }} />);
+        // vertical bar joining the two stubs
+        elements.push(<View key={`lv-${round}-${p}`} style={{ position: 'absolute', left: cx + halfConn - 1, top: topCY, width: BK_LINE, height: botCY - topCY, backgroundColor: BK_LINE_COLOR }} />);
+        // horizontal line from midpoint into the next round's card
+        elements.push(<View key={`lmh-${round}-${p}`} style={{ position: 'absolute', left: cx + halfConn, top: midCY - 1, width: halfConn, height: BK_LINE, backgroundColor: BK_LINE_COLOR }} />);
+      }
+    }
+  });
+
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+      <View style={{ paddingBottom: 24, paddingRight: 16 }}>
+        {/* Round labels */}
+        <View style={{ flexDirection: 'row', marginBottom: 10 }}>
+          {roundIndices.map((round, colIdx) => (
+            <View key={round} style={{ width: colIdx < numCols - 1 ? BK_COL_W : BK_CARD_W, alignItems: 'center' }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.92)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {getRoundLabel(round, totalRounds)}
+              </Text>
+            </View>
+          ))}
+        </View>
+        {/* Canvas */}
+        <View style={{ width: bracketW, height: totalH }}>
+          {elements}
+        </View>
+      </View>
+    </ScrollView>
+  );
 }
 
 function TournamentDetailScreenInner({ route, navigation }) {
@@ -162,6 +287,9 @@ function TournamentDetailScreenInner({ route, navigation }) {
   );
 
   const matches = data?.matches;
+  const participants = data?.participants;
+  const isRoundRobin = data?.tournament?.format === 'round_robin';
+
   const matchesByRound = useMemo(() => {
     const byRound = {};
     (matches || []).forEach((m) => {
@@ -176,10 +304,39 @@ function TournamentDetailScreenInner({ route, navigation }) {
     return byRound;
   }, [matches]);
 
+  const leagueTable = useMemo(() => {
+    if (!isRoundRobin || !participants?.length || !matches) return [];
+    const pts = {};
+    participants.forEach((p) => {
+      pts[p.id] = { participant: p, played: 0, won: 0, lost: 0, points: 0 };
+    });
+    matches.forEach((m) => {
+      const p1Id = m.player1_participant_id;
+      const p2Id = m.player2_participant_id;
+      if (p1Id && pts[p1Id]) {
+        pts[p1Id].played++;
+        if (m.winner_participant_id === p1Id) {
+          pts[p1Id].won++;
+          pts[p1Id].points += 3;
+        } else if (m.winner_participant_id) pts[p1Id].lost++;
+      }
+      if (p2Id && pts[p2Id]) {
+        pts[p2Id].played++;
+        if (m.winner_participant_id === p2Id) {
+          pts[p2Id].won++;
+          pts[p2Id].points += 3;
+        } else if (m.winner_participant_id) pts[p2Id].lost++;
+      }
+    });
+    return Object.values(pts)
+      .map((row) => ({ ...row, displayName: row.participant?.display_name || 'TBD' }))
+      .sort((a, b) => b.points - a.points || b.won - a.won);
+  }, [isRoundRobin, participants, matches]);
+
   if (loading) {
     return (
       <View style={styles.container}>
-        <ImageBackground source={require('../../media/tennis.jpg')} style={styles.backgroundImage} resizeMode="cover">
+        <ImageBackground source={require('../../media/Tournament.jpg')} style={styles.backgroundImage} resizeMode="cover">
           <View style={styles.backgroundOverlay} />
           <View style={styles.centered}>
             <Text style={styles.loading}>Loading…</Text>
@@ -192,7 +349,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
   if (!data || !data.tournament) {
     return (
       <View style={styles.container}>
-        <ImageBackground source={require('../../media/tennis.jpg')} style={styles.backgroundImage} resizeMode="cover">
+        <ImageBackground source={require('../../media/Tournament.jpg')} style={styles.backgroundImage} resizeMode="cover">
           <View style={styles.backgroundOverlay} />
           <View style={styles.centered}>
             <Text style={styles.loading}>Tournament not found</Text>
@@ -218,16 +375,10 @@ function TournamentDetailScreenInner({ route, navigation }) {
     .map((r) => parseInt(r, 10))
     .filter((r) => !Number.isNaN(r))
     .sort((a, b) => a - b);
-  const firstRoundMatchCount = roundIndices.length > 0 ? (matchesByRound[roundIndices[0]]?.length || 0) : 0;
-  const bracketHeight =
-    firstRoundMatchCount > 0
-      ? firstRoundMatchCount * 2 * Math.pow(2, totalRounds - 1) * BRACKET_SLOT_HEIGHT + BRACKET_MATCH_HEIGHT
-      : 200;
-  const bracketColumnHeight = 28 + bracketHeight;
 
   return (
     <View style={styles.container}>
-      <ImageBackground source={require('../../media/tennis.jpg')} style={styles.backgroundImage} resizeMode="cover">
+      <ImageBackground source={require('../../media/Tournament.jpg')} style={styles.backgroundImage} resizeMode="cover">
         <View style={styles.backgroundOverlay} />
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.headerGlass}>
@@ -238,7 +389,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
             )}
             <Text style={styles.title}>{tournament.name}</Text>
             <Text style={styles.meta}>
-              {tournament.draw_size}-draw · {isComplete ? 'Complete' : 'Ongoing'}
+              {isRoundRobin ? `Round robin · ${tournament.draw_size} players` : `${tournament.draw_size}-draw`} · {isComplete ? 'Complete' : 'Ongoing'}
               {tournament.date ? ` · ${tournament.date}` : ''}
             </Text>
             {tournament.description ? (
@@ -256,58 +407,84 @@ function TournamentDetailScreenInner({ route, navigation }) {
             )}
           </View>
 
-          <Text style={styles.bracketTitle}>Bracket</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={true}
-            contentContainerStyle={[styles.bracketScrollContent, { minHeight: bracketColumnHeight + 20 }]}
-          >
-            {roundIndices.map((round) => {
-              const roundMatches = matchesByRound[round] || [];
-              return (
-                <View key={round} style={[styles.bracketColumn, { width: BRACKET_COLUMN_WIDTH, minHeight: bracketColumnHeight }]}>
-                  <Text style={styles.bracketRoundLabel} numberOfLines={1}>
-                    {getRoundLabel(round, totalRounds)}
-                  </Text>
-                  {roundMatches.map((match, i) => {
-                    const hasWinner = !!match.winner_participant_id;
-                    const winnerId = match.winner_participant_id;
-                    const p1Won = winnerId === match.player1_participant_id;
-                    const p2Won = winnerId === match.player2_participant_id;
-                    const bothApp = match.player1_app_id && match.player2_app_id;
-                    const top = bracketSlotTop(round, i, totalRounds);
-                    return (
-                      <TouchableOpacity
-                        key={match.id ?? `r${round}-${i}`}
-                        style={[styles.bracketMatchCard, hasWinner && styles.bracketMatchCardDone, { top: 24 + top }]}
-                        onPress={() => openMatchActions(match)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={[styles.bracketPlayer, p1Won && styles.bracketWinner]} numberOfLines={1}>
-                          {match.player1_name || 'TBD'}
-                        </Text>
-                        <Text style={styles.bracketVs}>vs</Text>
-                        <Text style={[styles.bracketPlayer, p2Won && styles.bracketWinner]} numberOfLines={1}>
-                          {match.player2_name || 'TBD'}
-                        </Text>
-                        {hasWinner && (
-                          <Text style={styles.bracketWinnerLabel} numberOfLines={1}>
-                            ✓ {p1Won ? match.player1_name : match.player2_name}
-                          </Text>
-                        )}
-                        {bothApp && (h2hByMatchId[match.id]?.wins != null || h2hByMatchId[match.id]?.losses != null) && (
-                          <Text style={styles.bracketH2h} numberOfLines={1}>
-                            H2H: {h2hByMatchId[match.id].wins}–{h2hByMatchId[match.id].losses}
-                          </Text>
-                        )}
-                        {!hasWinner && <Text style={styles.bracketTapHint}>Tap to set winner</Text>}
-                      </TouchableOpacity>
-                    );
-                  })}
+          {isRoundRobin ? (
+            <>
+              <Text style={styles.bracketTitle}>League table</Text>
+              <View style={styles.leagueTable}>
+                <View style={styles.leagueHeaderRow}>
+                  <Text style={[styles.leagueCell, styles.leagueCellRank]}>#</Text>
+                  <Text style={[styles.leagueCell, styles.leagueCellPlayer]}>Player</Text>
+                  <Text style={[styles.leagueCell, styles.leagueCellNum]}>Pld</Text>
+                  <Text style={[styles.leagueCell, styles.leagueCellNum]}>W</Text>
+                  <Text style={[styles.leagueCell, styles.leagueCellNum]}>L</Text>
+                  <Text style={[styles.leagueCell, styles.leagueCellNum]}>Pts</Text>
                 </View>
-              );
-            })}
-          </ScrollView>
+                {leagueTable.map((row, idx) => (
+                  <View key={row.participant?.id ?? idx} style={styles.leagueRow}>
+                    <Text style={[styles.leagueCell, styles.leagueCellRank]}>{idx + 1}</Text>
+                    <Text style={[styles.leagueCell, styles.leagueCellPlayer]} numberOfLines={1}>{row.displayName}</Text>
+                    <Text style={[styles.leagueCell, styles.leagueCellNum]}>{row.played}</Text>
+                    <Text style={[styles.leagueCell, styles.leagueCellNum]}>{row.won}</Text>
+                    <Text style={[styles.leagueCell, styles.leagueCellNum]}>{row.lost}</Text>
+                    <Text style={[styles.leagueCell, styles.leagueCellNum]}>{row.points}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={[styles.bracketTitle, { marginTop: 20 }]}>Fixtures</Text>
+              {roundIndices.map((round) => {
+                const roundMatches = matchesByRound[round] || [];
+                return (
+                  <View key={round} style={styles.roundRobinRound}>
+                    <Text style={styles.roundRobinRoundLabel}>Round {round + 1}</Text>
+                    {roundMatches.map((match) => {
+                      const hasWinner = !!match.winner_participant_id;
+                      const p1Won = match.winner_participant_id === match.player1_participant_id;
+                      const p2Won = match.winner_participant_id === match.player2_participant_id;
+                      const bothApp = match.player1_app_id && match.player2_app_id;
+                      return (
+                        <TouchableOpacity
+                          key={match.id}
+                          style={[styles.roundRobinMatchCard, hasWinner && styles.bracketMatchCardDone]}
+                          onPress={() => openMatchActions(match)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.bracketPlayer, p1Won && styles.bracketWinner]} numberOfLines={1}>
+                            {match.player1_name || 'TBD'}
+                          </Text>
+                          <Text style={styles.bracketVs}>vs</Text>
+                          <Text style={[styles.bracketPlayer, p2Won && styles.bracketWinner]} numberOfLines={1}>
+                            {match.player2_name || 'TBD'}
+                          </Text>
+                          {hasWinner && (
+                            <Text style={styles.bracketWinnerLabel} numberOfLines={1}>
+                              ✓ {p1Won ? match.player1_name : match.player2_name}
+                            </Text>
+                          )}
+                          {bothApp && (h2hByMatchId[match.id]?.wins != null || h2hByMatchId[match.id]?.losses != null) && (
+                            <Text style={styles.bracketH2h} numberOfLines={1}>
+                              H2H: {h2hByMatchId[match.id].wins}–{h2hByMatchId[match.id].losses}
+                            </Text>
+                          )}
+                          {!hasWinner && <Text style={styles.bracketTapHint}>Tap to set winner</Text>}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              <Text style={styles.bracketTitle}>Bracket</Text>
+              <KnockoutBracket
+                matchesByRound={matchesByRound}
+                roundIndices={roundIndices}
+                totalRounds={totalRounds}
+                openMatchActions={openMatchActions}
+                h2hByMatchId={h2hByMatchId}
+              />
+            </>
+          )}
         </ScrollView>
       </ImageBackground>
     </View>
@@ -371,8 +548,8 @@ const styles = StyleSheet.create({
   bracketMatchCard: {
     position: 'absolute',
     left: 0,
-    width: BRACKET_COLUMN_WIDTH - 8,
-    minHeight: BRACKET_MATCH_HEIGHT,
+    width: 122,
+    minHeight: 52,
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 10,
     padding: 8,
@@ -391,6 +568,30 @@ const styles = StyleSheet.create({
   bracketWinnerLabel: { fontSize: 10, color: '#1a472a', fontWeight: '600', marginTop: 2 },
   bracketH2h: { fontSize: 9, color: '#5a6a5a', marginTop: 1 },
   bracketTapHint: { fontSize: 9, color: '#888', marginTop: 2 },
+
+  leagueTable: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
+  },
+  leagueHeaderRow: { flexDirection: 'row', marginBottom: 8, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.1)' },
+  leagueRow: { flexDirection: 'row', paddingVertical: 6 },
+  leagueCell: { fontSize: 13, color: '#1a1a1a' },
+  leagueCellRank: { width: 24, fontWeight: '700' },
+  leagueCellPlayer: { flex: 1, marginLeft: 4 },
+  leagueCellNum: { width: 32, textAlign: 'center', fontWeight: '600' },
+  roundRobinRound: { marginBottom: 16 },
+  roundRobinRoundLabel: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.9)', marginBottom: 6, textTransform: 'uppercase' },
+  roundRobinMatchCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
+  },
 });
 
 export default function TournamentDetailScreen(props) {

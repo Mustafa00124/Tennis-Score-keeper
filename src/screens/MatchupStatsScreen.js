@@ -178,7 +178,7 @@ export default function MatchupStatsScreen({ route, navigation }) {
   return (
     <View style={styles.container}>
       <ImageBackground
-        source={require('../../media/tennis.jpg')}
+        source={require('../../media/Matchups.jpg')}
         style={styles.backgroundImage}
         resizeMode="cover"
       >

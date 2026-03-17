@@ -607,6 +607,10 @@ function isValidDrawSize(n) {
   return n >= 2 && n <= 64 && (n & (n - 1)) === 0;
 }
 
+function isValidRoundRobinSize(n) {
+  return n >= 2 && n <= 20;
+}
+
 export async function getAllTournaments() {
   const list = loadTournaments();
   return list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
@@ -620,8 +624,10 @@ export async function getTournamentById(tournamentId) {
 export async function createTournament(name, drawSize, opts = {}) {
   const trimmed = (name || '').trim();
   if (!trimmed) throw new Error('Tournament name is required');
-  const size = parseInt(drawSize, 10) || 8;
-  if (!isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
+  const format = opts.format === 'round_robin' ? 'round_robin' : 'knockout';
+  const size = parseInt(drawSize, 10) || (format === 'round_robin' ? 4 : 8);
+  if (format === 'knockout' && !isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
+  if (format === 'round_robin' && !isValidRoundRobinSize(size)) throw new Error('Number of players must be 2–20 for round robin');
   const list = loadTournaments();
   const id = list.length ? Math.max(...list.map((t) => t.id)) + 1 : 1;
   const date = (opts.date || '').trim() || null;
@@ -633,6 +639,7 @@ export async function createTournament(name, drawSize, opts = {}) {
     name: trimmed,
     status: 'ongoing',
     draw_size: size,
+    format,
     date: date || null,
     description: description || null,
     remarks: remarks || null,
@@ -651,6 +658,7 @@ export async function updateTournament(tournamentId, updates = {}) {
   if (updates.description !== undefined) t.description = (updates.description || '').trim() || null;
   if (updates.remarks !== undefined) t.remarks = (updates.remarks || '').trim() || null;
   if (updates.images !== undefined) t.images = Array.isArray(updates.images) ? updates.images : (updates.images || null);
+  if (updates.format !== undefined) t.format = updates.format;
   saveTournaments(list);
 }
 
@@ -686,7 +694,68 @@ export async function getTournamentParticipants(tournamentId) {
   return list;
 }
 
+/** Circle method: player 0 fixed, others rotate. Returns [{ round, i, j }] with i < j. */
+function roundRobinPairings(n) {
+  const pairs = [];
+  const rounds = n - 1;
+  const half = Math.floor(n / 2);
+  for (let r = 0; r < rounds; r++) {
+    pairs.push({ round: r, i: 0, j: r + 1 });
+    for (let k = 1; k < half; k++) {
+      const a = (r + k) % (n - 1) + 1;
+      const b = (r + n - 1 - k) % (n - 1) + 1;
+      pairs.push({ round: r, i: Math.min(a, b), j: Math.max(a, b) });
+    }
+  }
+  return pairs;
+}
+
+export async function setTournamentRoundRobinDraw(tournamentId, participantIdsBySlot) {
+  const participants = loadTournamentParticipants().filter((p) => p.tournament_id === tournamentId);
+  const bySlot = participantIdsBySlot.slice(0).map((pid) => participants.find((x) => x.id === pid)).filter(Boolean);
+  for (let slot = 0; slot < bySlot.length; slot++) {
+    const p = bySlot[slot];
+    if (p) p.slot = slot;
+  }
+  saveTournamentParticipants([
+    ...loadTournamentParticipants().filter((p) => p.tournament_id !== tournamentId),
+    ...participants,
+  ]);
+  const ordered = loadTournamentParticipants()
+    .filter((p) => p.tournament_id === tournamentId)
+    .sort((a, b) => a.slot - b.slot);
+  const slotToParticipant = ordered.map((p) => p.id);
+  const n = slotToParticipant.length;
+  if (n < 2) return;
+  const pairings = roundRobinPairings(n);
+  const existing = loadTournamentMatches();
+  const maxId = existing.length ? Math.max(...existing.map((m) => m.id)) : 0;
+  const toAdd = pairings.map((pr, idx) => ({
+    id: maxId + idx + 1,
+    tournament_id: tournamentId,
+    round: pr.round,
+    match_index_in_round: pairings.filter((p) => p.round === pr.round && (p.i !== pr.i || p.j !== pr.j)).length,
+    player1_participant_id: slotToParticipant[pr.i],
+    player2_participant_id: slotToParticipant[pr.j],
+    winner_participant_id: null,
+    linked_match_id: null,
+  }));
+  const byRound = {};
+  toAdd.forEach((m) => {
+    if (!byRound[m.round]) byRound[m.round] = 0;
+    m.match_index_in_round = byRound[m.round]++;
+  });
+  saveTournamentMatches([
+    ...existing.filter((m) => m.tournament_id !== tournamentId),
+    ...toAdd,
+  ]);
+}
+
 export async function setTournamentDraw(tournamentId, participantIdsBySlot) {
+  const tournament = await getTournamentById(tournamentId);
+  if (tournament?.format === 'round_robin') {
+    return setTournamentRoundRobinDraw(tournamentId, participantIdsBySlot);
+  }
   let participants = loadTournamentParticipants().filter((p) => p.tournament_id === tournamentId);
   for (let slot = 0; slot < participantIdsBySlot.length; slot++) {
     const pid = participantIdsBySlot[slot];
@@ -699,7 +768,6 @@ export async function setTournamentDraw(tournamentId, participantIdsBySlot) {
   ]);
   participants = loadTournamentParticipants().filter((p) => p.tournament_id === tournamentId).sort((a, b) => a.slot - b.slot);
   const slotToParticipant = Object.fromEntries(participants.map((p) => [p.slot, p.id]));
-  const tournament = await getTournamentById(tournamentId);
   const drawSize = tournament?.draw_size ?? 8;
   let numMatches = drawSize / 2;
   let round = 0;
@@ -780,6 +848,8 @@ export async function setTournamentMatchWinner(tournamentMatchId, winnerParticip
   if (!row) return;
   row.winner_participant_id = winnerParticipantId;
   saveTournamentMatches(all);
+  const tournament = loadTournaments().find((t) => t.id === row.tournament_id);
+  if (tournament?.format === 'round_robin') return;
   const nextRound = row.round - 1;
   if (nextRound < 0) {
     const tournaments = loadTournaments();

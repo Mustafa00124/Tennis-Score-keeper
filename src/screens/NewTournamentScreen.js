@@ -20,6 +20,9 @@ import {
 } from '../db/database';
 
 const DRAW_SIZES = [4, 8, 16];
+const ROUND_ROBIN_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 20];
+const FORMAT_KNOCKOUT = 'knockout';
+const FORMAT_ROUND_ROBIN = 'round_robin';
 
 function shuffle(arr) {
   const a = [...arr];
@@ -33,6 +36,7 @@ function shuffle(arr) {
 export default function NewTournamentScreen({ navigation }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
+  const [format, setFormat] = useState(FORMAT_KNOCKOUT);
   const [drawSize, setDrawSize] = useState(8);
   const [date, setDate] = useState('');
   const [description, setDescription] = useState('');
@@ -52,25 +56,26 @@ export default function NewTournamentScreen({ navigation }) {
     loadPlayers();
   }, [loadPlayers]);
 
+  const maxPlayers = format === FORMAT_ROUND_ROBIN ? drawSize : drawSize;
   const addAppPlayer = useCallback(
     (player) => {
-      if (participantSlots.length >= drawSize) return;
+      if (participantSlots.length >= maxPlayers) return;
       if (participantSlots.some((s) => s.type === 'app' && s.playerId === player.id)) return;
       setParticipantSlots((prev) => [
         ...prev,
         { type: 'app', playerId: player.id, displayName: player.name },
       ]);
     },
-    [drawSize, participantSlots.length]
+    [maxPlayers, participantSlots.length]
   );
 
   const addCustomPlayer = useCallback(() => {
     const n = (customName || '').trim();
     if (!n) return;
-    if (participantSlots.length >= drawSize) return;
+    if (participantSlots.length >= maxPlayers) return;
     setParticipantSlots((prev) => [...prev, { type: 'custom', displayName: n }]);
     setCustomName('');
-  }, [customName, drawSize, participantSlots.length]);
+  }, [customName, maxPlayers, participantSlots.length]);
 
   const removeSlot = useCallback((index) => {
     setParticipantSlots((prev) => prev.filter((_, i) => i !== index));
@@ -110,7 +115,10 @@ export default function NewTournamentScreen({ navigation }) {
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const canProceedToDraw = participantSlots.length === drawSize;
+  const canProceedToDraw =
+    format === FORMAT_KNOCKOUT
+      ? participantSlots.length === drawSize
+      : participantSlots.length >= 2 && participantSlots.length <= drawSize;
 
   const getTournamentDetails = useCallback(() => ({
     date: date.trim() || undefined,
@@ -119,18 +127,31 @@ export default function NewTournamentScreen({ navigation }) {
     images: images.length ? images : undefined,
   }), [date, description, remarks, images]);
 
+  const createOpts = useCallback(
+    () => ({
+      ...getTournamentDetails(),
+      format: format === FORMAT_ROUND_ROBIN ? 'round_robin' : undefined,
+    }),
+    [getTournamentDetails, format]
+  );
+
+  const participantCount = format === FORMAT_ROUND_ROBIN ? participantSlots.length : drawSize;
+
   const handleCreateWithRandomDraw = useCallback(async () => {
     if (!name.trim()) {
       Alert.alert('Name required', 'Enter a tournament name.');
       return;
     }
     if (!canProceedToDraw) {
-      Alert.alert('Fill draw', `Add exactly ${drawSize} players.`);
+      Alert.alert(
+        'Fill draw',
+        format === FORMAT_KNOCKOUT ? `Add exactly ${drawSize} players.` : `Add between 2 and ${drawSize} players.`
+      );
       return;
     }
     setSaving(true);
     try {
-      const tournamentId = await createTournament(name.trim(), drawSize, getTournamentDetails());
+      const tournamentId = await createTournament(name.trim(), participantCount, createOpts());
       const participantIds = [];
       for (let i = 0; i < participantSlots.length; i++) {
         const s = participantSlots[i];
@@ -144,15 +165,15 @@ export default function NewTournamentScreen({ navigation }) {
         );
         participantIds.push(id);
       }
-      const shuffled = shuffle(participantIds);
-      await setTournamentDraw(tournamentId, shuffled);
+      const order = format === FORMAT_KNOCKOUT ? shuffle(participantIds) : participantIds;
+      await setTournamentDraw(tournamentId, order);
       setSaving(false);
       navigation.replace('TournamentDetail', { tournamentId, tournamentName: name.trim() });
     } catch (e) {
       setSaving(false);
       Alert.alert('Error', e.message || 'Could not create tournament');
     }
-  }, [name, drawSize, participantSlots, canProceedToDraw, navigation, getTournamentDetails]);
+  }, [name, drawSize, format, participantSlots, participantCount, canProceedToDraw, navigation, createOpts]);
 
   const handleCreateWithManualDraw = useCallback(async () => {
     if (!name.trim()) {
@@ -160,12 +181,15 @@ export default function NewTournamentScreen({ navigation }) {
       return;
     }
     if (!canProceedToDraw) {
-      Alert.alert('Fill draw', `Add exactly ${drawSize} players.`);
+      Alert.alert(
+        'Fill draw',
+        format === FORMAT_KNOCKOUT ? `Add exactly ${drawSize} players.` : `Add between 2 and ${drawSize} players.`
+      );
       return;
     }
     setSaving(true);
     try {
-      const tournamentId = await createTournament(name.trim(), drawSize, getTournamentDetails());
+      const tournamentId = await createTournament(name.trim(), participantCount, createOpts());
       const participantIds = [];
       for (let i = 0; i < participantSlots.length; i++) {
         const s = participantSlots[i];
@@ -186,7 +210,38 @@ export default function NewTournamentScreen({ navigation }) {
       setSaving(false);
       Alert.alert('Error', e.message || 'Could not create tournament');
     }
-  }, [name, drawSize, participantSlots, canProceedToDraw, navigation, getTournamentDetails]);
+  }, [name, drawSize, format, participantSlots, participantCount, canProceedToDraw, navigation, createOpts]);
+
+  const handleStartRoundRobin = useCallback(async () => {
+    if (!name.trim()) {
+      Alert.alert('Name required', 'Enter a tournament name.');
+      return;
+    }
+    if (!canProceedToDraw) {
+      Alert.alert('Fill draw', `Add between 2 and ${drawSize} players.`);
+      return;
+    }
+    setSaving(true);
+    try {
+      const tournamentId = await createTournament(name.trim(), participantSlots.length, createOpts());
+      const participantIds = [];
+      for (let i = 0; i < participantSlots.length; i++) {
+        const s = participantSlots[i];
+        const id = await addTournamentParticipant(
+          tournamentId,
+          { playerId: s.playerId ?? undefined, displayName: s.displayName },
+          i
+        );
+        participantIds.push(id);
+      }
+      await setTournamentDraw(tournamentId, participantIds);
+      setSaving(false);
+      navigation.replace('TournamentDetail', { tournamentId, tournamentName: name.trim() });
+    } catch (e) {
+      setSaving(false);
+      Alert.alert('Error', e.message || 'Could not create tournament');
+    }
+  }, [name, drawSize, participantSlots, canProceedToDraw, navigation, createOpts]);
 
   return (
     <KeyboardAvoidingView
@@ -198,26 +253,61 @@ export default function NewTournamentScreen({ navigation }) {
         {step === 1 && (
           <>
             <Text style={styles.sectionTitle}>Tournament name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. Summer Cup 2025"
-              placeholderTextColor="#999"
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-            />
-            <Text style={styles.sectionTitle}>Draw size</Text>
-            <View style={styles.chipRow}>
-              {DRAW_SIZES.map((size) => (
+            <View style={styles.nameRow}>
+              <TextInput
+                style={[styles.input, styles.nameInput]}
+                placeholder="e.g. Summer Cup 2025"
+                placeholderTextColor="#999"
+                value={name}
+                onChangeText={setName}
+                autoCapitalize="words"
+              />
+              <View style={styles.formatToggle}>
                 <TouchableOpacity
-                  key={size}
-                  style={[styles.chip, drawSize === size && styles.chipSelected]}
-                  onPress={() => setDrawSize(size)}
+                  style={[styles.toggleSegment, format === FORMAT_KNOCKOUT && styles.toggleSegmentActive]}
+                  onPress={() => setFormat(FORMAT_KNOCKOUT)}
                 >
-                  <Text style={[styles.chipText, drawSize === size && styles.chipTextSelected]}>{size}</Text>
+                  <Text style={[styles.toggleText, format === FORMAT_KNOCKOUT && styles.toggleTextActive]}>Knockout</Text>
                 </TouchableOpacity>
-              ))}
+                <TouchableOpacity
+                  style={[styles.toggleSegment, format === FORMAT_ROUND_ROBIN && styles.toggleSegmentActive]}
+                  onPress={() => setFormat(FORMAT_ROUND_ROBIN)}
+                >
+                  <Text style={[styles.toggleText, format === FORMAT_ROUND_ROBIN && styles.toggleTextActive]}>Round Robin</Text>
+                </TouchableOpacity>
+              </View>
             </View>
+            {format === FORMAT_KNOCKOUT ? (
+              <>
+                <Text style={styles.sectionTitle}>Draw size</Text>
+                <View style={styles.chipRow}>
+                  {DRAW_SIZES.map((size) => (
+                    <TouchableOpacity
+                      key={size}
+                      style={[styles.chip, drawSize === size && styles.chipSelected]}
+                      onPress={() => setDrawSize(size)}
+                    >
+                      <Text style={[styles.chipText, drawSize === size && styles.chipTextSelected]}>{size}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.sectionTitle}>Number of players</Text>
+                <View style={styles.chipRow}>
+                  {ROUND_ROBIN_SIZES.map((size) => (
+                    <TouchableOpacity
+                      key={size}
+                      style={[styles.chip, drawSize === size && styles.chipSelected]}
+                      onPress={() => setDrawSize(size)}
+                    >
+                      <Text style={[styles.chipText, drawSize === size && styles.chipTextSelected]}>{size}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
             <Text style={styles.sectionTitle}>Date (optional)</Text>
             <TextInput
               style={styles.input}
@@ -274,8 +364,14 @@ export default function NewTournamentScreen({ navigation }) {
 
         {step === 2 && (
           <>
-            <Text style={styles.sectionTitle}>Players ({participantSlots.length} / {drawSize})</Text>
-            <Text style={styles.hint}>Add from your players or type a name for others.</Text>
+            <Text style={styles.sectionTitle}>
+              Players ({participantSlots.length} / {format === FORMAT_KNOCKOUT ? drawSize : `${drawSize} max`})
+            </Text>
+            <Text style={styles.hint}>
+              {format === FORMAT_KNOCKOUT
+                ? 'Add from your players or type a name for others.'
+                : 'Add between 2 and ' + drawSize + ' players. Everyone plays everyone.'}
+            </Text>
             <View style={styles.chipRow}>
               {players.map((p) => (
                 <TouchableOpacity
@@ -342,7 +438,9 @@ export default function NewTournamentScreen({ navigation }) {
                 onPress={() => canProceedToDraw && setStep(3)}
                 disabled={!canProceedToDraw}
               >
-                <Text style={styles.primaryBtnText}>Next: Set draw</Text>
+                <Text style={styles.primaryBtnText}>
+                  {format === FORMAT_KNOCKOUT ? 'Next: Set draw' : 'Next: Start tournament'}
+                </Text>
               </TouchableOpacity>
             </View>
           </>
@@ -350,26 +448,44 @@ export default function NewTournamentScreen({ navigation }) {
 
         {step === 3 && (
           <>
-            <Text style={styles.sectionTitle}>Set draw</Text>
-            <Text style={styles.hint}>
-              Order above is slot 1–{drawSize}. Randomize or keep order and start.
-            </Text>
-            <View style={styles.drawBtns}>
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={handleCreateWithRandomDraw}
-                disabled={saving}
-              >
-                <Text style={styles.primaryBtnText}>{saving ? 'Creating…' : 'Random draw & start'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.secondaryBtn}
-                onPress={handleCreateWithManualDraw}
-                disabled={saving}
-              >
-                <Text style={styles.secondaryBtnText}>Keep order & start</Text>
-              </TouchableOpacity>
-            </View>
+            {format === FORMAT_ROUND_ROBIN ? (
+              <>
+                <Text style={styles.sectionTitle}>Start round robin</Text>
+                <Text style={styles.hint}>
+                  All {participantSlots.length} players will play each other once. Tap to start.
+                </Text>
+                <TouchableOpacity
+                  style={styles.primaryBtn}
+                  onPress={handleStartRoundRobin}
+                  disabled={saving}
+                >
+                  <Text style={styles.primaryBtnText}>{saving ? 'Creating…' : 'Start tournament'}</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.sectionTitle}>Set draw</Text>
+                <Text style={styles.hint}>
+                  Order above is slot 1–{drawSize}. Randomize or keep order and start.
+                </Text>
+                <View style={styles.drawBtns}>
+                  <TouchableOpacity
+                    style={styles.primaryBtn}
+                    onPress={handleCreateWithRandomDraw}
+                    disabled={saving}
+                  >
+                    <Text style={styles.primaryBtnText}>{saving ? 'Creating…' : 'Random draw & start'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.secondaryBtn}
+                    onPress={handleCreateWithManualDraw}
+                    disabled={saving}
+                  >
+                    <Text style={styles.secondaryBtnText}>Keep order & start</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
             <TouchableOpacity style={styles.backLink} onPress={() => setStep(2)}>
               <Text style={styles.backLinkText}>← Back to players</Text>
             </TouchableOpacity>
@@ -385,6 +501,13 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 40 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: '#1a472a', marginTop: 16, marginBottom: 8 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  nameInput: { flex: 1, marginBottom: 0 },
+  formatToggle: { flexDirection: 'row', backgroundColor: '#e8ece8', borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#c8d4c8' },
+  toggleSegment: { paddingVertical: 10, paddingHorizontal: 12 },
+  toggleSegmentActive: { backgroundColor: '#1a472a' },
+  toggleText: { fontSize: 12, fontWeight: '600', color: '#555' },
+  toggleTextActive: { color: '#fff' },
   hint: { fontSize: 13, color: '#666', marginBottom: 12 },
   input: {
     borderWidth: 1,

@@ -1,5 +1,6 @@
 {
   "expo": {
+    "icon": "./media/App-Icon.jpg",
     "name": "Tennis Scorekeeper",
     "slug": "tennis-scorekeeper",
     "version": "1.0.0",

@@ -144,7 +144,7 @@ export default function HomeScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <ImageBackground
-        source={require('../../media/tennis.jpg')}
+        source={require('../../media/Home.jpg')}
         style={styles.backgroundImage}
         resizeMode="cover"
       >
@@ -488,6 +488,8 @@ function MatchUpCard({ matchup, onPress, onAddDay }) {
   const daysLabel = matchup.matchCount > 0 ? `${matchup.matchCount} day${matchup.matchCount !== 1 ? 's' : ''}` : null;
   return (
     <TouchableOpacity style={styles.matchCard} onPress={onPress} activeOpacity={0.7}>
+      <ImageBackground source={require('../../media/Matchups.jpg')} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      <View style={styles.matchCardImageOverlay} />
       <GreenRippleOverlay />
       <LiquidGradientOverlay />
       <View style={styles.matchCardInner}>
@@ -534,10 +536,13 @@ function PlayerCard({ player, stats, onPress }) {
 
 function TournamentCard({ tournament, onPress }) {
   const isComplete = tournament.status === 'complete';
-  const metaParts = [`${tournament.draw_size}-draw`, isComplete ? 'Complete' : 'Ongoing'];
+  const formatLabel = tournament.format === 'round_robin' ? `Round robin · ${tournament.draw_size}` : `${tournament.draw_size}-draw`;
+  const metaParts = [formatLabel, isComplete ? 'Complete' : 'Ongoing'];
   if (tournament.date) metaParts.push(tournament.date);
   return (
     <TouchableOpacity style={[styles.tournamentCard, isComplete && styles.tournamentCardComplete]} onPress={onPress} activeOpacity={0.7}>
+      <ImageBackground source={require('../../media/Tournament.jpg')} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      <View style={styles.tournamentCardImageOverlay} />
       <GreenRippleOverlay />
       <LiquidGradientOverlay />
       <View style={styles.tournamentCardInner}>
@@ -624,7 +629,6 @@ const styles = StyleSheet.create({
   cardScrollContent: { paddingBottom: 24 },
   emptyHint: { color: 'rgba(255,255,255,0.9)', fontSize: 14, paddingVertical: 12, paddingHorizontal: 4, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   matchCard: {
-    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
     marginBottom: 10,
     borderWidth: 1,
@@ -635,6 +639,10 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
     overflow: 'hidden',
+  },
+  matchCardImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.55)',
   },
   gradientOverlayWrap: {
     ...StyleSheet.absoluteFillObject,
@@ -682,7 +690,6 @@ const styles = StyleSheet.create({
   playerCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
   playerCardStats: { fontSize: 12, color: '#666', marginTop: 4 },
   tournamentCard: {
-    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
     marginBottom: 10,
     borderWidth: 1,
@@ -693,6 +700,10 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
     overflow: 'hidden',
+  },
+  tournamentCardImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.55)',
   },
   tournamentCardComplete: { opacity: 0.88 },
   tournamentCardInner: { padding: 14 },
