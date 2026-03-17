@@ -378,8 +378,8 @@ function GreenRippleOverlay() {
         Animated.timing(opacity, { toValue: 0.52, duration: RIPPLE_FADE_IN_MS, useNativeDriver: true }),
       ]),
       Animated.parallel([
-        Animated.timing(scale, { toValue: 2.8, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.06, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
+        Animated.timing(scale, { toValue: 5.5, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.14, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
       ]),
       Animated.parallel([
         Animated.timing(scale, { toValue: 0, duration: 0, useNativeDriver: true }),
