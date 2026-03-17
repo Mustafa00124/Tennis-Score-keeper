@@ -11,6 +11,7 @@ import {
   TextInput,
   Image,
   Alert,
+  ImageBackground,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -133,7 +134,13 @@ export default function PlayerDetailScreen({ route, navigation }) {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ImageBackground
+      source={require('../../media/Players.jpg')}
+      style={styles.backgroundImage}
+      resizeMode="cover"
+    >
+      <View style={styles.backgroundOverlay} />
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.card}>
         <View style={styles.profileHeader}>
           <ProfileAvatar uri={player?.profile_image} name={player?.name} size={92} />
@@ -197,6 +204,7 @@ export default function PlayerDetailScreen({ route, navigation }) {
           })
         )}
       </View>
+      </ScrollView>
 
       <Modal visible={editVisible} animationType="slide" transparent>
         <KeyboardAvoidingView
@@ -278,7 +286,7 @@ export default function PlayerDetailScreen({ route, navigation }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </ScrollView>
+    </ImageBackground>
   );
 }
 
@@ -344,15 +352,22 @@ function MatchRow({ match, opponent, isPlayer1, playerId, onPress }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f4f0' },
+  backgroundImage: { flex: 1 },
+  backgroundOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+  container: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.75)',
     padding: 18,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.9)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.12,
     shadowRadius: 8,
     elevation: 3,
     marginBottom: 12,
@@ -384,7 +399,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.6)',
     padding: 14,
     marginBottom: 8,
     borderRadius: 12,

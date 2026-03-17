@@ -213,7 +213,9 @@ function TournamentDetailScreenInner({ route, navigation }) {
             try {
               const h2h = await getTournamentH2H(tournamentId, a, b);
               byMatch[m.id] = h2h;
-            } catch (_) {}
+            } catch (e) {
+              if (__DEV__) console.warn('TournamentDetail: H2H load failed for match', m.id, e?.message);
+            }
           }
         }
         setH2hByMatchId(byMatch);
@@ -367,7 +369,9 @@ function TournamentDetailScreenInner({ route, navigation }) {
   if (tournament.images) {
     try {
       imageList = typeof tournament.images === 'string' ? JSON.parse(tournament.images) : (tournament.images || []);
-    } catch (_) {}
+    } catch (e) {
+      if (__DEV__) console.warn('TournamentDetail: tournament images parse failed', e?.message);
+    }
   }
   if (!Array.isArray(imageList)) imageList = [];
 
@@ -532,34 +536,6 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.3)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
-  },
-  bracketScrollContent: { paddingRight: 24, paddingBottom: 20 },
-  bracketColumn: {
-    marginRight: 12,
-    alignItems: 'center',
-  },
-  bracketRoundLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.9)',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  bracketMatchCard: {
-    position: 'absolute',
-    left: 0,
-    width: 122,
-    minHeight: 52,
-    backgroundColor: 'rgba(255,255,255,0.72)',
-    borderRadius: 10,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.85)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
   bracketMatchCardDone: { borderLeftWidth: 3, borderLeftColor: '#1a472a' },
   bracketPlayer: { fontSize: 12, color: '#1a1a1a' },

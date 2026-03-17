@@ -5,9 +5,10 @@ A mobile tennis match tracking app built with **React Native (Expo)** and **SQLi
 ## Features
 
 - **Players**: Create and manage player profiles.
-- **Record match**: Pick two players, set the date, and enter set scores (e.g. 6–3, 4–6, 7–5). The winner is determined automatically and the match is stored for both players.
+- **Match ups**: Create match-ups between two players; add match days and enter set scores (e.g. 6–3, 4–6, 7–5). The winner is determined automatically and stored for both players.
 - **Player profile**: View total matches, wins/losses, and full match history with opponent names and dates.
-- **Statistics**: See total games won, total sets won, win percentage, and head-to-head records between players.
+- **Matchup stats**: Head-to-head stats, sets/games won, win percentage, and detailed stats per pair.
+- **Tournaments**: Create knockout or round-robin tournaments with brackets and league tables.
 
 ## Setup
 
@@ -29,6 +30,6 @@ Data is stored in SQLite on device. The structure (players, matches, set_scores)
 ## Project structure
 
 - `App.js` – Entry, wraps app in navigation and safe area.
-- `src/db/database.js` – SQLite schema, init, and all queries (players, matches, stats, head-to-head).
-- `src/navigation/AppNavigator.js` – Bottom tabs (Players, Record Match, Statistics) and stack for player detail.
-- `src/screens/` – PlayersScreen, PlayerDetailScreen, RecordMatchScreen, StatsScreen.
+- `src/db/database.native.js` / `database.web.js` – SQLite (native) or localStorage (web); same API for players, matches, stats, tournaments.
+- `src/navigation/AppNavigator.js` – Native stack (Home, MatchDetail, MatchupStats, PlayerDetail, NewTournament, TournamentDetail).
+- `src/screens/` – HomeScreen, MatchDetailScreen, MatchupStatsScreen, PlayerDetailScreen, PlayersScreen, NewTournamentScreen, TournamentDetailScreen.

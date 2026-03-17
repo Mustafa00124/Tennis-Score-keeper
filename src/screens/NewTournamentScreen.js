@@ -56,7 +56,7 @@ export default function NewTournamentScreen({ navigation }) {
     loadPlayers();
   }, [loadPlayers]);
 
-  const maxPlayers = format === FORMAT_ROUND_ROBIN ? drawSize : drawSize;
+  const maxPlayers = drawSize;
   const addAppPlayer = useCallback(
     (player) => {
       if (participantSlots.length >= maxPlayers) return;

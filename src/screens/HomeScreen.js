@@ -354,132 +354,43 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-/** Ripple timing: 0.5s between each of 3 ripples, then 2s pause. Cycle 5.2s so all three stay in sync. */
-const RIPPLE_DURATION = 4200;
-const RIPPLE_CYCLE = 5200;
+/**
+ * Pulses a green gradient across the card: fades in (transparent → greener) and back, slowly.
+ * Gradient runs across the div for a subtle directional tint.
+ */
+const PULSE_DURATION = 5000;
 
-/** Ripple starts from a point at top-left corner (center at 0,0), with a short soft fade-in so it's not abrupt. */
-const RIPPLE_FADE_IN_MS = 220;
-const RIPPLE_EXPAND_DURATION = RIPPLE_DURATION - RIPPLE_FADE_IN_MS;
-
-/** Small green ripples from top-left: 3 overlapping ripples with 0.5s stagger, then 2s pause. */
-function GreenRippleOverlay() {
-  const s1 = useRef(new Animated.Value(0)).current;
-  const o1 = useRef(new Animated.Value(0)).current;
-  const s2 = useRef(new Animated.Value(0)).current;
-  const o2 = useRef(new Animated.Value(0)).current;
-  const s3 = useRef(new Animated.Value(0)).current;
-  const o3 = useRef(new Animated.Value(0)).current;
-
-  const runRipple = (scale, opacity) =>
-    Animated.sequence([
-      Animated.parallel([
-        Animated.timing(scale, { toValue: 0.08, duration: RIPPLE_FADE_IN_MS, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.52, duration: RIPPLE_FADE_IN_MS, useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.timing(scale, { toValue: 5.5, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.14, duration: RIPPLE_EXPAND_DURATION, useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.timing(scale, { toValue: 0, duration: 0, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0, duration: 0, useNativeDriver: true }),
-      ]),
-    ]);
+function CardColorPulse() {
+  const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const loop1 = Animated.loop(
-      Animated.sequence([runRipple(s1, o1), Animated.delay(RIPPLE_CYCLE - RIPPLE_DURATION)])
-    );
-    const loop2 = Animated.loop(
-      Animated.sequence([Animated.delay(500), runRipple(s2, o2), Animated.delay(RIPPLE_CYCLE - 500 - RIPPLE_DURATION)])
-    );
-    const loop3 = Animated.loop(
-      Animated.sequence([Animated.delay(1000), runRipple(s3, o3), Animated.delay(RIPPLE_CYCLE - 1000 - RIPPLE_DURATION)])
-    );
-    loop1.start();
-    loop2.start();
-    loop3.start();
-    return () => {
-      loop1.stop();
-      loop2.stop();
-      loop3.stop();
-    };
-  }, [s1, o1, s2, o2, s3, o3]);
-
-  return (
-    <View style={styles.gradientOverlayWrap} pointerEvents="none">
-      <Animated.View style={[styles.greenRippleCircle, { opacity: o1, transform: [{ scale: s1 }] }]} />
-      <Animated.View style={[styles.greenRippleCircle, { opacity: o2, transform: [{ scale: s2 }] }]} />
-      <Animated.View style={[styles.greenRippleCircle, { opacity: o3, transform: [{ scale: s3 }] }]} />
-    </View>
-  );
-}
-
-/** Liquid-style gradient overlay: gradient is larger than the card and drifts so the highlight visibly moves. */
-function LiquidGradientOverlay() {
-  const driftX = useRef(new Animated.Value(0)).current;
-  const driftY = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const animation = Animated.loop(
+    const pulse = Animated.loop(
       Animated.sequence([
-        Animated.parallel([
-          Animated.timing(driftX, {
-            toValue: 36,
-            duration: 5000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(driftY, {
-            toValue: 24,
-            duration: 5000,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.parallel([
-          Animated.timing(driftX, {
-            toValue: 0,
-            duration: 5000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(driftY, {
-            toValue: 0,
-            duration: 5000,
-            useNativeDriver: true,
-          }),
-        ]),
+        Animated.timing(opacity, { toValue: 1, duration: PULSE_DURATION, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0, duration: PULSE_DURATION, useNativeDriver: true }),
       ])
     );
-    animation.start();
-    return () => animation.stop();
-  }, [driftX, driftY]);
+    pulse.start();
+    return () => pulse.stop();
+  }, [opacity]);
+
   return (
-    <View style={styles.gradientOverlayWrap} pointerEvents="none">
-      <Animated.View
-        style={[
-          styles.liquidGradientLayer,
-          {
-            transform: [
-              { translateX: driftX },
-              { translateY: driftY },
-            ],
-          },
+    <Animated.View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, { opacity, borderRadius: 14, overflow: 'hidden' }]}
+    >
+      <LinearGradient
+        colors={[
+          'rgba(160,220,180,0.5)',
+          'rgba(120,195,150,0.55)',
+          'rgba(100,180,140,0.45)',
         ]}
-      >
-        <LinearGradient
-          colors={[
-            'transparent',
-            'rgba(255,255,255,0.06)',
-            'rgba(255,255,255,0.18)',
-            'rgba(255,255,255,0.08)',
-            'transparent',
-          ]}
-          locations={[0, 0.35, 0.5, 0.65, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-      </Animated.View>
-    </View>
+        locations={[0, 0.5, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+    </Animated.View>
   );
 }
 
@@ -488,10 +399,7 @@ function MatchUpCard({ matchup, onPress, onAddDay }) {
   const daysLabel = matchup.matchCount > 0 ? `${matchup.matchCount} day${matchup.matchCount !== 1 ? 's' : ''}` : null;
   return (
     <TouchableOpacity style={styles.matchCard} onPress={onPress} activeOpacity={0.7}>
-      <ImageBackground source={require('../../media/Matchups.jpg')} style={StyleSheet.absoluteFill} resizeMode="cover" />
-      <View style={styles.matchCardImageOverlay} />
-      <GreenRippleOverlay />
-      <LiquidGradientOverlay />
+      <CardColorPulse />
       <View style={styles.matchCardInner}>
           <View style={styles.matchCardHeader}>
             <Text style={styles.matchCardVs} numberOfLines={2}>
@@ -524,8 +432,7 @@ function PlayerCard({ player, stats, onPress }) {
     : null;
   return (
     <TouchableOpacity style={styles.playerCard} onPress={onPress} activeOpacity={0.7}>
-      <GreenRippleOverlay />
-      <LiquidGradientOverlay />
+      <CardColorPulse />
       <View style={styles.playerCardInner}>
         <Text style={styles.playerCardName} numberOfLines={1}>{player.name}</Text>
         {statLine ? <Text style={styles.playerCardStats} numberOfLines={1}>{statLine}</Text> : null}
@@ -541,10 +448,7 @@ function TournamentCard({ tournament, onPress }) {
   if (tournament.date) metaParts.push(tournament.date);
   return (
     <TouchableOpacity style={[styles.tournamentCard, isComplete && styles.tournamentCardComplete]} onPress={onPress} activeOpacity={0.7}>
-      <ImageBackground source={require('../../media/Tournament.jpg')} style={StyleSheet.absoluteFill} resizeMode="cover" />
-      <View style={styles.tournamentCardImageOverlay} />
-      <GreenRippleOverlay />
-      <LiquidGradientOverlay />
+      <CardColorPulse />
       <View style={styles.tournamentCardInner}>
         <Text style={styles.tournamentCardName} numberOfLines={1}>{tournament.name}</Text>
         <Text style={styles.tournamentCardMeta} numberOfLines={1}>
@@ -629,6 +533,7 @@ const styles = StyleSheet.create({
   cardScrollContent: { paddingBottom: 24 },
   emptyHint: { color: 'rgba(255,255,255,0.9)', fontSize: 14, paddingVertical: 12, paddingHorizontal: 4, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   matchCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
     marginBottom: 10,
     borderWidth: 1,
@@ -639,31 +544,6 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
     overflow: 'hidden',
-  },
-  matchCardImageOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.55)',
-  },
-  gradientOverlayWrap: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: 'hidden',
-    borderRadius: 14,
-  },
-  greenRippleCircle: {
-    position: 'absolute',
-    left: -60,
-    top: -60,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(18, 85, 45, 0.38)',
-  },
-  liquidGradientLayer: {
-    position: 'absolute',
-    width: '200%',
-    height: '200%',
-    left: '-50%',
-    top: '-50%',
   },
   matchCardInner: { padding: 14 },
   matchCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 },
@@ -690,6 +570,7 @@ const styles = StyleSheet.create({
   playerCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
   playerCardStats: { fontSize: 12, color: '#666', marginTop: 4 },
   tournamentCard: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
     marginBottom: 10,
     borderWidth: 1,
@@ -700,10 +581,6 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
     overflow: 'hidden',
-  },
-  tournamentCardImageOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.55)',
   },
   tournamentCardComplete: { opacity: 0.88 },
   tournamentCardInner: { padding: 14 },

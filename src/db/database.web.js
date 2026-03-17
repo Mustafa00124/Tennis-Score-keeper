@@ -394,7 +394,9 @@ export async function getMatchWithDetails(matchId) {
   if (m.images) {
     try {
       images = typeof m.images === 'string' ? JSON.parse(m.images) : (m.images || []);
-    } catch (_) {}
+    } catch (e) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) console.warn('getMatchWithDetails: images parse failed', e?.message);
+    }
   }
   return {
     ...m,
@@ -633,7 +635,7 @@ export async function createTournament(name, drawSize, opts = {}) {
   const date = (opts.date || '').trim() || null;
   const description = (opts.description || '').trim() || null;
   const remarks = (opts.remarks || '').trim() || null;
-  const images = Array.isArray(opts.images) ? opts.images : (opts.images ? null : null);
+  const images = Array.isArray(opts.images) ? opts.images : null;
   list.push({
     id,
     name: trimmed,
@@ -734,7 +736,7 @@ export async function setTournamentRoundRobinDraw(tournamentId, participantIdsBy
     id: maxId + idx + 1,
     tournament_id: tournamentId,
     round: pr.round,
-    match_index_in_round: pairings.filter((p) => p.round === pr.round && (p.i !== pr.i || p.j !== pr.j)).length,
+    match_index_in_round: 0,
     player1_participant_id: slotToParticipant[pr.i],
     player2_participant_id: slotToParticipant[pr.j],
     winner_participant_id: null,
