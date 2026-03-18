@@ -84,7 +84,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsMultipleSelection: true,
         quality: 0.8,
       });
@@ -335,6 +335,29 @@ export default function MatchDetailScreen({ route, navigation }) {
       >
         <Text style={styles.saveBtnText}>{saving ? 'Saving…' : 'Save & back to match list'}</Text>
       </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.deleteMatchBtn}
+        onPress={() => {
+          Alert.alert(
+            'Delete this match?',
+            'This will remove the match and all set scores. This cannot be undone.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Delete', style: 'destructive', onPress: async () => {
+                try {
+                  await deleteMatch(matchId);
+                  navigation.goBack();
+                } catch (e) {
+                  Alert.alert('Error', e.message || 'Could not delete match');
+                }
+              }},
+            ]
+          );
+        }}
+      >
+        <Text style={styles.deleteMatchBtnText}>Delete match</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -433,4 +456,12 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   saveBtnDisabled: { opacity: 0.6 },
+  deleteMatchBtn: {
+    marginTop: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: 'rgba(197,48,48,0.12)',
+  },
+  deleteMatchBtnText: { fontSize: 15, fontWeight: '600', color: '#c53030' },
 });

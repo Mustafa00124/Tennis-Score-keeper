@@ -150,7 +150,16 @@ export async function getPlayerById(id) {
   return players.find((p) => p.id === id) ?? null;
 }
 
+/** Delete a player and all their matches (and set_scores). Tournament participants referencing this player are unlinked (player_id set to null). */
 export async function deletePlayer(id) {
+  const matches = loadMatches().filter((m) => m.player1_id !== id && m.player2_id !== id);
+  const matchIdsToRemove = loadMatches().filter((m) => m.player1_id === id || m.player2_id === id).map((m) => m.id);
+  saveMatches(matches);
+  const scores = loadSetScores().filter((s) => !matchIdsToRemove.includes(s.match_id));
+  saveSetScores(scores);
+  const participants = loadTournamentParticipants();
+  participants.forEach((p) => { if (p.player_id === id) p.player_id = null; });
+  saveTournamentParticipants(participants);
   const players = loadPlayers().filter((p) => p.id !== id);
   savePlayers(players);
 }
@@ -258,6 +267,20 @@ export async function deleteMatch(matchId) {
   const matches = loadMatches().filter((m) => m.id !== matchId);
   saveMatches(matches);
   const scores = loadSetScores().filter((s) => s.match_id !== matchId);
+  saveSetScores(scores);
+}
+
+/** Delete all matches (and their set_scores) between two players. */
+export async function deleteAllMatchesForMatchup(player1Id, player2Id) {
+  const matches = loadMatches().filter(
+    (m) =>
+      (m.player1_id === player1Id && m.player2_id === player2Id) ||
+      (m.player1_id === player2Id && m.player2_id === player1Id)
+  );
+  const idsToRemove = matches.map((m) => m.id);
+  const newMatches = loadMatches().filter((m) => !idsToRemove.includes(m.id));
+  saveMatches(newMatches);
+  const scores = loadSetScores().filter((s) => !idsToRemove.includes(s.match_id));
   saveSetScores(scores);
 }
 

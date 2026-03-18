@@ -542,8 +542,15 @@ export async function getPlayerById(id) {
   return rows[0] ?? null;
 }
 
+/** Delete a player and all their matches (and set_scores). Tournament participants referencing this player are unlinked (player_id set to null). */
 export async function deletePlayer(id) {
   const database = await getDb();
+  const matchRows = await database.getAllAsync('SELECT id FROM matches WHERE player1_id = ? OR player2_id = ?', [id, id]);
+  for (const row of matchRows) {
+    await database.runAsync('DELETE FROM set_scores WHERE match_id = ?', [row.id]);
+    await database.runAsync('DELETE FROM matches WHERE id = ?', [row.id]);
+  }
+  await database.runAsync('UPDATE tournament_participants SET player_id = NULL WHERE player_id = ?', [id]);
   await database.runAsync('DELETE FROM players WHERE id = ?', [id]);
 }
 
@@ -613,6 +620,19 @@ export async function deleteMatch(matchId) {
   const database = await getDb();
   await database.runAsync('DELETE FROM set_scores WHERE match_id = ?', [matchId]);
   await database.runAsync('DELETE FROM matches WHERE id = ?', [matchId]);
+}
+
+/** Delete all matches (and their set_scores) between two players. */
+export async function deleteAllMatchesForMatchup(player1Id, player2Id) {
+  const database = await getDb();
+  const rows = await database.getAllAsync(
+    'SELECT id FROM matches WHERE (player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?)',
+    [player1Id, player2Id, player2Id, player1Id]
+  );
+  for (const row of rows) {
+    await database.runAsync('DELETE FROM set_scores WHERE match_id = ?', [row.id]);
+    await database.runAsync('DELETE FROM matches WHERE id = ?', [row.id]);
+  }
 }
 
 export async function getMatchesForPlayer(playerId) {

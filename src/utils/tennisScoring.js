@@ -12,8 +12,8 @@ export function gamesInValidRange(g1, g2) {
   return a >= 0 && a <= 7 && b >= 0 && b <= 7;
 }
 
-/** Tiebreak: one player >= 7 and leading by at least 2. */
-export function isTiebreakValid(tb1, tb2) {
+/** Tiebreak: one player >= 7 and leading by at least 2. (internal) */
+function isTiebreakValid(tb1, tb2) {
   const a = Number(tb1);
   const b = Number(tb2);
   if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return false;
@@ -56,24 +56,6 @@ export function isSetComplete(games1, games2, tiebreak1, tiebreak2) {
     return isTiebreakValid(tb1, tb2);
   }
   return isCompletedSetNoTiebreak(g1, g2);
-}
-
-/**
- * Returns { complete, incomplete } count and whether this match has any incomplete set.
- * Sets are array of { games_player1, games_player2, tiebreak_player1?, tiebreak_player2? }.
- */
-export function countCompleteAndIncompleteSets(sets) {
-  let complete = 0;
-  let incomplete = 0;
-  for (const s of sets || []) {
-    const g1 = s.games_player1 ?? 0;
-    const g2 = s.games_player2 ?? 0;
-    const tb1 = s.tiebreak_player1;
-    const tb2 = s.tiebreak_player2;
-    if (isSetComplete(g1, g2, tb1, tb2)) complete++;
-    else if (gamesInValidRange(g1, g2) && (g1 > 0 || g2 > 0)) incomplete++;
-  }
-  return { complete, incomplete, hasIncomplete: incomplete > 0 };
 }
 
 /** For UI: can we save this set? Games 0-7 only; if 7-6 or 6-7 need valid tiebreak. Incomplete sets (e.g. 3-2) are allowed. */

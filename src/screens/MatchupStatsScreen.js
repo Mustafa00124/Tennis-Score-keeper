@@ -8,6 +8,8 @@ import {
   getMatchupDayByDay,
   createMatchup,
   getMatchWithDetails,
+  deleteAllMatchesForMatchup,
+  deleteMatch,
 } from '../db/database';
 import { setNeedsTiebreak } from '../utils/tennisScoring';
 
@@ -179,6 +181,42 @@ export default function MatchupStatsScreen({ route, navigation }) {
     }
   }, [player1Id, player2Id, navigation]);
 
+  const handleDeleteAllDays = useCallback(() => {
+    Alert.alert(
+      'Delete all days?',
+      `Remove all match days between ${player1Name} and ${player2Name}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete all', style: 'destructive', onPress: async () => {
+          try {
+            await deleteAllMatchesForMatchup(player1Id, player2Id);
+            await load();
+          } catch (e) {
+            Alert.alert('Error', e.message || 'Could not delete');
+          }
+        }},
+      ]
+    );
+  }, [player1Id, player2Id, player1Name, player2Name, load]);
+
+  const handleDeleteDay = useCallback((matchId) => {
+    Alert.alert(
+      'Delete this day?',
+      'Remove this match and its set scores? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await deleteMatch(matchId);
+            await load();
+          } catch (e) {
+            Alert.alert('Error', e.message || 'Could not delete match');
+          }
+        }},
+      ]
+    );
+  }, [load]);
+
   if (h2h === null) {
     return <Text style={styles.loading}>Loading…</Text>;
   }
@@ -234,9 +272,16 @@ export default function MatchupStatsScreen({ route, navigation }) {
           />
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Days played</Text>
-            <TouchableOpacity style={styles.addDayBtn} onPress={handleAddDay}>
-              <Text style={styles.addDayText}>+ Add day</Text>
-            </TouchableOpacity>
+            <View style={styles.sectionHeaderActions}>
+              <TouchableOpacity style={styles.addDayBtn} onPress={handleAddDay}>
+                <Text style={styles.addDayText}>+ Add day</Text>
+              </TouchableOpacity>
+              {matches.length > 0 && (
+                <TouchableOpacity style={styles.deleteAllDaysBtn} onPress={handleDeleteAllDays}>
+                  <Text style={styles.deleteAllDaysText}>Delete all days</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
           {matches.length === 0 ? (
             <Text style={styles.hint}>No days recorded yet. Tap “Add day” to add a date and set scores.</Text>
@@ -247,6 +292,7 @@ export default function MatchupStatsScreen({ route, navigation }) {
                 match={m}
                 detail={matchDetails[m.id]}
                 onPress={() => openMatch(m.id)}
+                onDelete={() => handleDeleteDay(m.id)}
               />
             ))
           )}
@@ -432,25 +478,36 @@ function formatSetsForList(sets) {
   return sets.map(formatSetForList).filter(Boolean).join(' ');
 }
 
-function MatchRow({ match, detail, onPress }) {
+function MatchRow({ match, detail, onPress, onDelete }) {
   if (!match) return null;
   const dateLabel = match.date_played || 'No date';
   const setScoresStr = detail?.sets ? formatSetsForList(detail.sets) : '—';
   const remarks = (detail?.remarks || '').trim();
 
   return (
-    <TouchableOpacity style={styles.matchRowGlass} onPress={onPress} activeOpacity={0.7}>
-      <View style={styles.matchRowLeft}>
-        <Text style={styles.matchSetScores} numberOfLines={1}>{setScoresStr}</Text>
-        <View style={styles.matchRowMeta}>
-          <Text style={styles.matchDate}>{dateLabel}</Text>
-          {remarks.length > 0 && (
-            <Text style={styles.matchRemarks} numberOfLines={1}>{remarks}</Text>
-          )}
+    <View style={styles.matchRowGlassWrap}>
+      <TouchableOpacity style={styles.matchRowGlass} onPress={onPress} activeOpacity={0.7}>
+        <View style={styles.matchRowLeft}>
+          <Text style={styles.matchSetScores} numberOfLines={1}>{setScoresStr}</Text>
+          <View style={styles.matchRowMeta}>
+            <Text style={styles.matchDate}>{dateLabel}</Text>
+            {remarks.length > 0 && (
+              <Text style={styles.matchRemarks} numberOfLines={1}>{remarks}</Text>
+            )}
+          </View>
         </View>
-      </View>
-      <Text style={styles.matchChevron}>›</Text>
-    </TouchableOpacity>
+        <Text style={styles.matchChevron}>›</Text>
+      </TouchableOpacity>
+      {onDelete ? (
+        <TouchableOpacity
+          style={styles.matchRowDeleteBtn}
+          onPress={(e) => { e?.stopPropagation?.(); onDelete(); }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.matchRowDeleteText}>Delete</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
   );
 }
 
@@ -558,14 +615,18 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   addDayText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  sectionHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  deleteAllDaysBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10, backgroundColor: 'rgba(197,48,48,0.2)' },
+  deleteAllDaysText: { color: '#c53030', fontSize: 14, fontWeight: '600' },
   hint: { color: 'rgba(255,255,255,0.9)', fontSize: 15, marginBottom: 16, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  matchRowGlassWrap: { marginBottom: 10 },
   matchRowGlass: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.78)',
     borderRadius: 12,
     padding: 14,
-    marginBottom: 10,
+    marginBottom: 4,
     borderLeftWidth: 4,
     borderLeftColor: '#1a472a',
     borderWidth: 1,
@@ -582,6 +643,8 @@ const styles = StyleSheet.create({
   matchDate: { fontSize: 14, color: '#444' },
   matchRemarks: { fontSize: 12, color: '#666', fontStyle: 'italic', marginTop: 2 },
   matchChevron: { fontSize: 20, color: '#1a472a', fontWeight: '700' },
+  matchRowDeleteBtn: { alignSelf: 'flex-end', paddingVertical: 4, paddingHorizontal: 10 },
+  matchRowDeleteText: { fontSize: 12, fontWeight: '600', color: '#c53030' },
   statsTableGlass: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,

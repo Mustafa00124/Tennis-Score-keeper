@@ -16,6 +16,12 @@
     "plugins": [
       "expo-asset",
       "expo-sqlite"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "668d1fe7-8178-418d-8ffb-9e2b208eb301"
+      }
+    },
+    "owner": "mustafasid0124"
   }
 }

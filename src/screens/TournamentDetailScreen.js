@@ -481,15 +481,16 @@ function TournamentDetailScreenInner({ route, navigation }) {
     matches.forEach((m) => {
       const p1Id = m.player1_participant_id;
       const p2Id = m.player2_participant_id;
+      const hasResult = !!m.winner_participant_id;
       if (p1Id && pts[p1Id]) {
-        pts[p1Id].played++;
+        if (hasResult) pts[p1Id].played++;
         if (m.winner_participant_id === p1Id) {
           pts[p1Id].won++;
           pts[p1Id].points += 3;
         } else if (m.winner_participant_id) pts[p1Id].lost++;
       }
       if (p2Id && pts[p2Id]) {
-        pts[p2Id].played++;
+        if (hasResult) pts[p2Id].played++;
         if (m.winner_participant_id === p2Id) {
           pts[p2Id].won++;
           pts[p2Id].points += 3;

@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   Modal,
   KeyboardAvoidingView,
   Platform,
@@ -12,6 +13,7 @@ import {
   Image,
   Alert,
   ImageBackground,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -21,9 +23,8 @@ import {
   getMatchResult,
   getPlayerById,
   updatePlayer,
+  deletePlayer,
 } from '../db/database';
-
-const RACKET_LEVELS = ['Beginner', 'Intermediate', 'Advanced', 'Pro'];
 
 export default function PlayerDetailScreen({ route, navigation }) {
   const { playerId } = route.params || {};
@@ -36,7 +37,6 @@ export default function PlayerDetailScreen({ route, navigation }) {
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formStartDate, setFormStartDate] = useState('');
-  const [formRacketLevel, setFormRacketLevel] = useState('');
   const [formProfileImage, setFormProfileImage] = useState('');
 
   const load = useCallback(async () => {
@@ -68,7 +68,6 @@ export default function PlayerDetailScreen({ route, navigation }) {
     setFormName(player.name || '');
     setFormDescription(player.description || '');
     setFormStartDate(player.start_date || '');
-    setFormRacketLevel(player.racket_level || '');
     setFormProfileImage(player.profile_image || '');
     setEditVisible(true);
   }, [player]);
@@ -88,7 +87,7 @@ export default function PlayerDetailScreen({ route, navigation }) {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.8,
       });
@@ -99,6 +98,28 @@ export default function PlayerDetailScreen({ route, navigation }) {
       Alert.alert('Error', e.message || 'Could not pick image');
     }
   }, []);
+
+  const pickAndSaveProfileImage = useCallback(async () => {
+    if (!playerId) return;
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow photo access to pick a profile image.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        await updatePlayer(playerId, { profileImage: result.assets[0].uri });
+        await load();
+      }
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Could not pick image');
+    }
+  }, [playerId, load]);
 
   const handleSaveProfile = useCallback(async () => {
     if (!playerId) return;
@@ -113,7 +134,6 @@ export default function PlayerDetailScreen({ route, navigation }) {
         profileImage: formProfileImage || null,
         description: formDescription,
         startDate: formStartDate,
-        racketLevel: formRacketLevel,
       });
       setEditVisible(false);
       navigation.setParams?.({ playerName: formName.trim(), editMode: false });
@@ -127,7 +147,7 @@ export default function PlayerDetailScreen({ route, navigation }) {
     } finally {
       setSaving(false);
     }
-  }, [playerId, formName, formProfileImage, formDescription, formStartDate, formRacketLevel, navigation, load]);
+  }, [playerId, formName, formProfileImage, formDescription, formStartDate, navigation, load]);
 
   if (!playerId) {
     return <Text style={styles.hint}>Invalid player</Text>;
@@ -143,10 +163,20 @@ export default function PlayerDetailScreen({ route, navigation }) {
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.card}>
         <View style={styles.profileHeader}>
-          <ProfileAvatar uri={player?.profile_image} name={player?.name} size={92} />
-          <TouchableOpacity style={styles.editBtn} onPress={openEdit}>
+          <Pressable
+            onPress={pickAndSaveProfileImage}
+            style={({ pressed }) => [pressed && { opacity: 0.8 }]}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <ProfileAvatar uri={player?.profile_image} name={player?.name} size={92} />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.editBtn, pressed && { opacity: 0.8 }]}
+            onPress={openEdit}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
             <Text style={styles.editBtnText}>Edit</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
         <Text style={styles.name}>{player?.name || route.params?.playerName || 'Player'}</Text>
         <Text style={styles.description}>
@@ -154,8 +184,29 @@ export default function PlayerDetailScreen({ route, navigation }) {
         </Text>
         <View style={styles.metaRow}>
           <MetaPill label="Start date" value={player?.start_date || 'Not set'} />
-          <MetaPill label="Racket level" value={player?.racket_level || 'Not set'} />
         </View>
+        <TouchableOpacity
+          style={styles.deletePlayerBtn}
+          onPress={() => {
+            Alert.alert(
+              'Delete player?',
+              `Remove ${player?.name || 'this player'} and all their matches? This cannot be undone.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: async () => {
+                  try {
+                    await deletePlayer(playerId);
+                    navigation.goBack();
+                  } catch (e) {
+                    Alert.alert('Error', e.message || 'Could not delete player');
+                  }
+                }},
+              ]
+            );
+          }}
+        >
+          <Text style={styles.deletePlayerBtnText}>Delete player</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
@@ -206,26 +257,31 @@ export default function PlayerDetailScreen({ route, navigation }) {
       </View>
       </ScrollView>
 
-      <Modal visible={editVisible} animationType="slide" transparent>
+      <Modal visible={editVisible} animationType="slide" transparent statusBarTranslucent>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalOverlay}
         >
+          <TouchableWithoutFeedback onPress={() => setEditVisible(false)}>
+            <View style={styles.modalOverlayTouchable} />
+          </TouchableWithoutFeedback>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Edit player</Text>
             <View style={styles.profileEditRow}>
-              <ProfileAvatar uri={formProfileImage} name={formName} size={72} />
+              <Pressable onPress={pickProfileImage} style={({ pressed }) => [pressed && { opacity: 0.8 }]}>
+                <ProfileAvatar uri={formProfileImage} name={formName} size={72} />
+              </Pressable>
               <View style={styles.profileEditActions}>
-                <TouchableOpacity style={styles.imageBtn} onPress={pickProfileImage}>
+                <Pressable style={({ pressed }) => [styles.imageBtn, pressed && { opacity: 0.8 }]} onPress={pickProfileImage}>
                   <Text style={styles.imageBtnText}>Choose photo</Text>
-                </TouchableOpacity>
+                </Pressable>
                 {formProfileImage ? (
-                  <TouchableOpacity
-                    style={[styles.imageBtn, styles.imageBtnSecondary]}
+                  <Pressable
+                    style={({ pressed }) => [styles.imageBtn, styles.imageBtnSecondary, pressed && { opacity: 0.8 }]}
                     onPress={() => setFormProfileImage('')}
                   >
                     <Text style={styles.imageBtnSecondaryText}>Remove</Text>
-                  </TouchableOpacity>
+                  </Pressable>
                 ) : null}
               </View>
             </View>
@@ -259,21 +315,6 @@ export default function PlayerDetailScreen({ route, navigation }) {
               placeholder="YYYY-MM-DD"
               placeholderTextColor="#999"
             />
-
-            <Text style={styles.inputLabel}>Racket level</Text>
-            <View style={styles.levelRow}>
-              {RACKET_LEVELS.map((lvl) => (
-                <TouchableOpacity
-                  key={lvl}
-                  style={[styles.levelChip, formRacketLevel === lvl && styles.levelChipActive]}
-                  onPress={() => setFormRacketLevel(lvl)}
-                >
-                  <Text style={[styles.levelChipText, formRacketLevel === lvl && styles.levelChipTextActive]}>
-                    {lvl}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
 
             <View style={styles.modalButtons}>
               <TouchableOpacity style={styles.modalBtnSecondary} onPress={() => setEditVisible(false)}>
@@ -375,8 +416,10 @@ const styles = StyleSheet.create({
   profileHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
   avatarFallback: { backgroundColor: '#e2ebdf', alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontSize: 28, fontWeight: '700', color: '#1a472a' },
-  editBtn: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#1a472a' },
+  editBtn: { paddingVertical: 12, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center', borderRadius: 10, backgroundColor: '#1a472a' },
   editBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  deletePlayerBtn: { marginTop: 16, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10, backgroundColor: 'rgba(197,48,48,0.12)', alignSelf: 'flex-start' },
+  deletePlayerBtnText: { fontSize: 13, fontWeight: '600', color: '#c53030' },
   name: { fontSize: 24, fontWeight: '700', color: '#1a472a', marginBottom: 8 },
   description: { fontSize: 14, lineHeight: 20, color: '#444', marginBottom: 14 },
   metaRow: { flexDirection: 'row', gap: 10 },
@@ -411,6 +454,7 @@ const styles = StyleSheet.create({
   matchDate: { fontSize: 13, color: '#666' },
   hint: { padding: 24, textAlign: 'center', color: '#666' },
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalOverlayTouchable: { flex: 1 },
   modalCard: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
@@ -446,11 +490,6 @@ const styles = StyleSheet.create({
     minHeight: 74,
     textAlignVertical: 'top',
   },
-  levelRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
-  levelChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 18, backgroundColor: '#efefef' },
-  levelChipActive: { backgroundColor: '#e0ebde', borderWidth: 1, borderColor: '#1a472a' },
-  levelChipText: { fontSize: 13, color: '#555' },
-  levelChipTextActive: { color: '#1a472a', fontWeight: '700' },
   modalButtons: { flexDirection: 'row', marginTop: 20, gap: 10 },
   modalBtn: { flex: 1, backgroundColor: '#1a472a', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   modalBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },

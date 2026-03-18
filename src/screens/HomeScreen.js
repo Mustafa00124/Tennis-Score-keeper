@@ -27,14 +27,37 @@ import {
   getPlayerStats,
   getAllTournaments,
   getHeadToHead,
+  deletePlayer,
+  deleteTournament,
+  deleteAllMatchesForMatchup,
 } from '../db/database';
 import NewTournamentScreen from './NewTournamentScreen';
 
 const HEADER_HEIGHT = 56;
 const SCREEN_W = Dimensions.get('window').width;
-const CARD_H = 142;
+
+/** On web, Alert.alert() does not call onPress for buttons; use window.confirm so delete actually runs. */
+function confirmDelete(title, message, onConfirm) {
+  if (Platform.OS === 'web') {
+    const ok = window.confirm([title, message].filter(Boolean).join('\n\n'));
+    if (ok) {
+      Promise.resolve(onConfirm()).catch((e) => {
+        Alert.alert('Error', e?.message || 'Could not delete');
+      });
+    }
+  } else {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: onConfirm },
+    ]);
+  }
+}
+
+const CARD_H = 142;           // list card height
+const STACK_CARD_H = 200;    // stack card height (squarish)
 const STACK_OFFSET = 14;
 const SWIPE_THRESH = 60;
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 /** From all matches (one per day), build unique matchup pairs (one per player pair). */
 function uniqueMatchupsFromMatches(matchList) {
@@ -78,13 +101,36 @@ export default function HomeScreen({ navigation }) {
   const [addPlayerVisible, setAddPlayerVisible] = useState(false);
   const [newTournamentVisible, setNewTournamentVisible] = useState(false);
   const [activeTab, setActiveTab] = useState('matches');
-  const [matchLayout, setMatchLayout] = useState('stack'); // 'stack' | 'list'
-  const stackContainerAnim = useRef(new Animated.Value(1)).current;
-  const listCardAnims = useMemo(() => matches.map(() => new Animated.Value(0)), [matches.length]);
+  const [matchLayout, setMatchLayout] = useState('list'); // 'stack' | 'list'
+  const [playerLayout, setPlayerLayout] = useState('list');
+  const [tournamentLayout, setTournamentLayout] = useState('list');
+  // Start at 0 so in default list mode the stack is hidden; avoids both layers visible at once (ghosting)
+  const stackContainerAnim = useRef(new Animated.Value(0)).current;
+  const playerStackContainerAnim = useRef(new Animated.Value(0)).current;
+  const tournamentStackContainerAnim = useRef(new Animated.Value(0)).current;
+  // Initial value must match current layout so first paint is correct (no 0→1 flash when in list)
+  const listCardAnims = useMemo(
+    () => matches.map(() => new Animated.Value(matchLayout === 'list' ? 1 : 0)),
+    [matches.length, matchLayout]
+  );
+  const playerListAnims = useMemo(
+    () => players.map(() => new Animated.Value(playerLayout === 'list' ? 1 : 0)),
+    [players.length, playerLayout]
+  );
+  const tournamentListAnims = useMemo(
+    () => tournaments.map(() => new Animated.Value(tournamentLayout === 'list' ? 1 : 0)),
+    [tournaments.length, tournamentLayout]
+  );
 
   useEffect(() => {
     if (matchLayout === 'list') listCardAnims.forEach((a) => a.setValue(1));
   }, [listCardAnims, matchLayout]);
+  useEffect(() => {
+    if (playerLayout === 'list') playerListAnims.forEach((a) => a.setValue(1));
+  }, [playerListAnims, playerLayout]);
+  useEffect(() => {
+    if (tournamentLayout === 'list') tournamentListAnims.forEach((a) => a.setValue(1));
+  }, [tournamentListAnims, tournamentLayout]);
 
   const [player1Id, setPlayer1Id] = useState(null);
   const [player2Id, setPlayer2Id] = useState(null);
@@ -96,9 +142,9 @@ export default function HomeScreen({ navigation }) {
       getAllPlayers(),
       getAllTournaments(),
     ]);
+    const matchups = uniqueMatchupsFromMatches(matchList);
     setPlayers(playerList);
     setTournaments(tournamentList);
-    const matchups = uniqueMatchupsFromMatches(matchList);
     const matchupsWithH2h = await Promise.all(
       matchups.map(async (mu) => {
         const h2h = await getHeadToHead(mu.player1_id, mu.player2_id);
@@ -154,23 +200,69 @@ export default function HomeScreen({ navigation }) {
 
     if (toList) {
       Animated.spring(stackContainerAnim, {
-        toValue: 0, tension: 90, friction: 10, useNativeDriver: true,
+        toValue: 0, tension: 90, friction: 10, useNativeDriver: USE_NATIVE_DRIVER,
       }).start(() => {
         Animated.stagger(50, listCardAnims.map((a) =>
-          Animated.spring(a, { toValue: 1, tension: 62, friction: 11, useNativeDriver: true })
+          Animated.spring(a, { toValue: 1, tension: 62, friction: 11, useNativeDriver: USE_NATIVE_DRIVER })
         )).start();
       });
     } else {
       Animated.stagger(28, [...listCardAnims].reverse().map((a) =>
-        Animated.timing(a, { toValue: 0, duration: 105, useNativeDriver: true })
+        Animated.timing(a, { toValue: 0, duration: 105, useNativeDriver: USE_NATIVE_DRIVER })
       )).start(() => {
         listCardAnims.forEach((a) => a.setValue(0));
         Animated.spring(stackContainerAnim, {
-          toValue: 1, tension: 70, friction: 11, useNativeDriver: true,
+          toValue: 1, tension: 70, friction: 11, useNativeDriver: USE_NATIVE_DRIVER,
         }).start();
       });
     }
   }, [matchLayout, stackContainerAnim, listCardAnims]);
+
+  const togglePlayerLayout = useCallback(() => {
+    const toList = playerLayout === 'stack';
+    setPlayerLayout(toList ? 'list' : 'stack');
+    if (toList) {
+      Animated.spring(playerStackContainerAnim, {
+        toValue: 0, tension: 90, friction: 10, useNativeDriver: USE_NATIVE_DRIVER,
+      }).start(() => {
+        Animated.stagger(50, playerListAnims.map((a) =>
+          Animated.spring(a, { toValue: 1, tension: 62, friction: 11, useNativeDriver: USE_NATIVE_DRIVER })
+        )).start();
+      });
+    } else {
+      Animated.stagger(28, [...playerListAnims].reverse().map((a) =>
+        Animated.timing(a, { toValue: 0, duration: 105, useNativeDriver: USE_NATIVE_DRIVER })
+      )).start(() => {
+        playerListAnims.forEach((a) => a.setValue(0));
+        Animated.spring(playerStackContainerAnim, {
+          toValue: 1, tension: 70, friction: 11, useNativeDriver: USE_NATIVE_DRIVER,
+        }).start();
+      });
+    }
+  }, [playerLayout, playerStackContainerAnim, playerListAnims]);
+
+  const toggleTournamentLayout = useCallback(() => {
+    const toList = tournamentLayout === 'stack';
+    setTournamentLayout(toList ? 'list' : 'stack');
+    if (toList) {
+      Animated.spring(tournamentStackContainerAnim, {
+        toValue: 0, tension: 90, friction: 10, useNativeDriver: USE_NATIVE_DRIVER,
+      }).start(() => {
+        Animated.stagger(50, tournamentListAnims.map((a) =>
+          Animated.spring(a, { toValue: 1, tension: 62, friction: 11, useNativeDriver: USE_NATIVE_DRIVER })
+        )).start();
+      });
+    } else {
+      Animated.stagger(28, [...tournamentListAnims].reverse().map((a) =>
+        Animated.timing(a, { toValue: 0, duration: 105, useNativeDriver: USE_NATIVE_DRIVER })
+      )).start(() => {
+        tournamentListAnims.forEach((a) => a.setValue(0));
+        Animated.spring(tournamentStackContainerAnim, {
+          toValue: 1, tension: 70, friction: 11, useNativeDriver: USE_NATIVE_DRIVER,
+        }).start();
+      });
+    }
+  }, [tournamentLayout, tournamentStackContainerAnim, tournamentListAnims]);
 
   const handleAddPlayer = useCallback(async () => {
     const name = newPlayerName.trim();
@@ -241,6 +333,16 @@ export default function HomeScreen({ navigation }) {
               <Text style={styles.layoutToggleIcon}>{matchLayout === 'stack' ? '☰' : '⊟'}</Text>
             </TouchableOpacity>
           )}
+          {activeTab === 'players' && players.length > 0 && (
+            <TouchableOpacity onPress={togglePlayerLayout} style={styles.layoutToggleBtn} hitSlop={8}>
+              <Text style={styles.layoutToggleIcon}>{playerLayout === 'stack' ? '☰' : '⊟'}</Text>
+            </TouchableOpacity>
+          )}
+          {activeTab === 'tournaments' && tournaments.length > 0 && (
+            <TouchableOpacity onPress={toggleTournamentLayout} style={styles.layoutToggleBtn} hitSlop={8}>
+              <Text style={styles.layoutToggleIcon}>{tournamentLayout === 'stack' ? '☰' : '⊟'}</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.plusBtn}
             onPress={
@@ -260,13 +362,13 @@ export default function HomeScreen({ navigation }) {
             ) : (
               <View style={{ flex: 1, position: 'relative' }}>
                 <Animated.View
-                  pointerEvents={matchLayout === 'stack' ? 'auto' : 'none'}
                   style={[
                     StyleSheet.absoluteFill,
                     {
                       opacity: stackContainerAnim,
                       transform: [{ scale: stackContainerAnim.interpolate({ inputRange: [0, 1], outputRange: [0.84, 1], extrapolate: 'clamp' }) }],
                       zIndex: matchLayout === 'stack' ? 2 : 1,
+                      pointerEvents: matchLayout === 'stack' ? 'auto' : 'none',
                     },
                   ]}
                 >
@@ -289,11 +391,24 @@ export default function HomeScreen({ navigation }) {
                         Alert.alert('Error', e.message || 'Could not add day');
                       }
                     }}
+                    onDelete={(mu) => {
+                      confirmDelete(
+                        'Delete matchup?',
+                        `Remove all match days for ${mu.player1_name} vs ${mu.player2_name}? This cannot be undone.`,
+                        async () => {
+                          try {
+                            await deleteAllMatchesForMatchup(mu.player1_id, mu.player2_id);
+                            await load();
+                          } catch (e) {
+                            Alert.alert('Error', e.message || 'Could not delete');
+                          }
+                        }
+                      );
+                    }}
                   />
                 </Animated.View>
                 <Animated.View
-                  pointerEvents={matchLayout === 'list' ? 'auto' : 'none'}
-                  style={[StyleSheet.absoluteFill, { zIndex: matchLayout === 'list' ? 2 : 1 }]}
+                  style={[StyleSheet.absoluteFill, { zIndex: matchLayout === 'list' ? 2 : 1, pointerEvents: matchLayout === 'list' ? 'auto' : 'none' }]}
                 >
                   <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
                     {matches.map((mu, k) => (
@@ -324,6 +439,20 @@ export default function HomeScreen({ navigation }) {
                               Alert.alert('Error', e.message || 'Could not add day');
                             }
                           }}
+                          onDelete={() => {
+                            confirmDelete(
+                              'Delete matchup?',
+                              `Remove all match days for ${mu.player1_name} vs ${mu.player2_name}? This cannot be undone.`,
+                              async () => {
+                                try {
+                                  await deleteAllMatchesForMatchup(mu.player1_id, mu.player2_id);
+                                  await load();
+                                } catch (e) {
+                                  Alert.alert('Error', e.message || 'Could not delete');
+                                }
+                              }
+                            );
+                          }}
                         />
                       </Animated.View>
                     ))}
@@ -331,37 +460,154 @@ export default function HomeScreen({ navigation }) {
                 </Animated.View>
               </View>
             )
-          ) : (
-            <ScrollView
-              style={styles.cardScroll}
-              contentContainerStyle={styles.cardScrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {activeTab === 'players' ? (
-                players.length === 0 ? (
-                  <Text style={styles.emptyHint}>No players. Tap + to add.</Text>
-                ) : (
-                  players.map((p) => (
-                    <PlayerCard
-                      key={p.id}
-                      player={p}
-                      stats={playerStats[p.id]}
-                      onPress={() => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name })}
-                    />
-                  ))
-                )
-              ) : tournaments.length === 0 ? (
-                <Text style={styles.emptyHint}>No tournaments. Tap + to create.</Text>
-              ) : (
-                tournaments.map((t) => (
-                  <TournamentCard
-                    key={t.id}
-                    tournament={t}
-                    onPress={() => navigation.navigate('TournamentDetail', { tournamentId: t.id, tournamentName: t.name })}
+          ) : activeTab === 'players' ? (
+            players.length === 0 ? (
+              <Text style={styles.emptyHint}>No players. Tap + to add.</Text>
+            ) : (
+              <View style={{ flex: 1, position: 'relative' }}>
+                <Animated.View
+                  style={[
+                    StyleSheet.absoluteFill,
+                    {
+                      opacity: playerStackContainerAnim,
+                      transform: [{ scale: playerStackContainerAnim.interpolate({ inputRange: [0, 1], outputRange: [0.84, 1], extrapolate: 'clamp' }) }],
+                      zIndex: playerLayout === 'stack' ? 2 : 1,
+                      pointerEvents: playerLayout === 'stack' ? 'auto' : 'none',
+                    },
+                  ]}
+                >
+                  <PlayerCardStack
+                    items={players}
+                    playerStats={playerStats}
+                    onPressItem={(p) => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name })}
+                    onEdit={(p) => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name, editMode: true })}
+                    onDelete={(p) => {
+                      confirmDelete(
+                        'Delete player?',
+                        `Remove ${p.name} and all their matches? This cannot be undone.`,
+                        async () => {
+                          try {
+                            await deletePlayer(p.id);
+                            await load();
+                          } catch (e) {
+                            Alert.alert('Error', e.message || 'Could not delete');
+                          }
+                        }
+                      );
+                    }}
                   />
-                ))
-              )}
-            </ScrollView>
+                </Animated.View>
+                <Animated.View
+                  style={[StyleSheet.absoluteFill, { zIndex: playerLayout === 'list' ? 2 : 1, pointerEvents: playerLayout === 'list' ? 'auto' : 'none' }]}
+                >
+                  <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
+                    {players.map((p, k) => (
+                      <Animated.View
+                        key={p.id}
+                        style={{
+                          opacity: playerListAnims[k],
+                          marginBottom: 10,
+                          transform: [{ translateY: playerListAnims[k].interpolate({ inputRange: [0, 1], outputRange: [36, 0] }) }],
+                        }}
+                      >
+                        <PlayerCard
+                          player={p}
+                          stats={playerStats[p.id]}
+                          onPress={() => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name })}
+                          onEdit={() => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name, editMode: true })}
+                          onDelete={() => {
+                            confirmDelete(
+                              'Delete player?',
+                              `Remove ${p.name} and all their matches? This cannot be undone.`,
+                              async () => {
+                                try {
+                                  await deletePlayer(p.id);
+                                  await load();
+                                } catch (e) {
+                                  Alert.alert('Error', e.message || 'Could not delete');
+                                }
+                              }
+                            );
+                          }}
+                          variant="list"
+                        />
+                      </Animated.View>
+                    ))}
+                  </ScrollView>
+                </Animated.View>
+              </View>
+            )
+          ) : tournaments.length === 0 ? (
+            <Text style={styles.emptyHint}>No tournaments. Tap + to create.</Text>
+          ) : (
+            <View style={{ flex: 1, position: 'relative' }}>
+              <Animated.View
+                style={[
+                  StyleSheet.absoluteFill,
+                  {
+                    opacity: tournamentStackContainerAnim,
+                    transform: [{ scale: tournamentStackContainerAnim.interpolate({ inputRange: [0, 1], outputRange: [0.84, 1], extrapolate: 'clamp' }) }],
+                    zIndex: tournamentLayout === 'stack' ? 2 : 1,
+                    pointerEvents: tournamentLayout === 'stack' ? 'auto' : 'none',
+                  },
+                ]}
+              >
+                <TournamentCardStack
+                  items={tournaments}
+                  onPressItem={(t) => navigation.navigate('TournamentDetail', { tournamentId: t.id, tournamentName: t.name })}
+                  onDelete={(t) => {
+                    confirmDelete(
+                      'Delete tournament?',
+                      `Remove "${t.name}" and its bracket? This cannot be undone.`,
+                      async () => {
+                        try {
+                          await deleteTournament(t.id);
+                          await load();
+                        } catch (e) {
+                          Alert.alert('Error', e.message || 'Could not delete');
+                        }
+                      }
+                    );
+                  }}
+                />
+              </Animated.View>
+              <Animated.View
+                style={[StyleSheet.absoluteFill, { zIndex: tournamentLayout === 'list' ? 2 : 1, pointerEvents: tournamentLayout === 'list' ? 'auto' : 'none' }]}
+              >
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
+                  {tournaments.map((t, k) => (
+                    <Animated.View
+                      key={t.id}
+                      style={{
+                        opacity: tournamentListAnims[k],
+                        marginBottom: 10,
+                        transform: [{ translateY: tournamentListAnims[k].interpolate({ inputRange: [0, 1], outputRange: [36, 0] }) }],
+                      }}
+                    >
+                      <TournamentCard
+                        tournament={t}
+                        onPress={() => navigation.navigate('TournamentDetail', { tournamentId: t.id, tournamentName: t.name })}
+                        onDelete={() => {
+                          confirmDelete(
+                            'Delete tournament?',
+                            `Remove "${t.name}" and its bracket? This cannot be undone.`,
+                            async () => {
+                              try {
+                                await deleteTournament(t.id);
+                                await load();
+                              } catch (e) {
+                                Alert.alert('Error', e.message || 'Could not delete');
+                              }
+                            }
+                          );
+                        }}
+                        variant="list"
+                      />
+                    </Animated.View>
+                  ))}
+                </ScrollView>
+              </Animated.View>
+            </View>
           )}
       </View>
         </View>
@@ -491,8 +737,8 @@ function CardColorPulse() {
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(opacity, { toValue: 1, duration: PULSE_DURATION, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0, duration: PULSE_DURATION, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: PULSE_DURATION, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(opacity, { toValue: 0, duration: PULSE_DURATION, useNativeDriver: USE_NATIVE_DRIVER }),
       ])
     );
     pulse.start();
@@ -501,8 +747,7 @@ function CardColorPulse() {
 
   return (
     <Animated.View
-      pointerEvents="none"
-      style={[StyleSheet.absoluteFill, { opacity, borderRadius: 14, overflow: 'hidden' }]}
+      style={[StyleSheet.absoluteFill, { opacity, borderRadius: 14, overflow: 'hidden', pointerEvents: 'none' }]}
     >
       <LinearGradient
         colors={[
@@ -519,7 +764,7 @@ function CardColorPulse() {
   );
 }
 
-function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
+function MatchUpCardStack({ items, players, onPressItem, onAddDay, onDelete }) {
   const n = items.length;
   const nRef = useRef(n);
   nRef.current = n;
@@ -538,7 +783,7 @@ function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
     Animated.timing(swipeX, {
       toValue: dir > 0 ? -(SCREEN_W * 1.3) : SCREEN_W * 1.3,
       duration: 280,
-      useNativeDriver: true,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start(() => {
       swipeX.setValue(0);
       setActiveIdx((i) => (i + dir + nRef.current) % nRef.current);
@@ -562,7 +807,7 @@ function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
         if (currentN < 2) { swipeX.setValue(0); return; }
         const dir = g.dx < -SWIPE_THRESH ? 1 : g.dx > SWIPE_THRESH ? -1 : 0;
         if (dir === 0) {
-          Animated.spring(swipeX, { toValue: 0, friction: 7, useNativeDriver: true }).start();
+          Animated.spring(swipeX, { toValue: 0, friction: 7, useNativeDriver: USE_NATIVE_DRIVER }).start();
           return;
         }
         doSwipeRef.current?.(dir);
@@ -598,7 +843,7 @@ function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
 
   if (n === 0) return null;
 
-  const containerH = CARD_H + STACK_OFFSET * (visibleCount - 1);
+  const containerH = STACK_CARD_H + STACK_OFFSET * (visibleCount - 1);
 
   return (
     <View style={styles.stackOuter}>
@@ -619,14 +864,14 @@ function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
             posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
             animStyle = {
               transform: [{ scale: nextScale }, { translateY: nextTransY }],
-              opacity: 0.88,
+              opacity: 0.95,
               zIndex: 9,
             };
           } else {
             posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
             animStyle = {
               transform: [{ scale: thirdScale }, { translateY: thirdTransY }],
-              opacity: 0.7,
+              opacity: 0.9,
               zIndex: 8,
             };
           }
@@ -642,7 +887,9 @@ function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
                 players={players}
                 onPress={depth === 0 ? () => onPressItem(item) : undefined}
                 onAddDay={depth === 0 ? () => onAddDay(item) : undefined}
-                cardStyle={{ height: CARD_H }}
+                onDelete={depth === 0 ? () => onDelete?.(item) : undefined}
+                cardStyle={{ height: STACK_CARD_H }}
+                variant="stack"
               />
             </Animated.View>
           );
@@ -684,7 +931,241 @@ function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
   );
 }
 
-function MatchUpCard({ matchup, players, onPress, onAddDay, cardStyle }) {
+function PlayerCardStack({ items, playerStats, onPressItem, onEdit, onDelete }) {
+  const n = items.length;
+  const nRef = useRef(n);
+  nRef.current = n;
+  const [activeIdx, setActiveIdx] = useState(0);
+  const safeIdx = n > 0 ? activeIdx % n : 0;
+  const swipingRef = useRef(false);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const visibleCount = Math.min(3, n);
+  const doSwipeRef = useRef(null);
+  doSwipeRef.current = (dir) => {
+    if (swipingRef.current || nRef.current < 2) return;
+    swipingRef.current = true;
+    Animated.timing(swipeX, {
+      toValue: dir > 0 ? -(SCREEN_W * 1.3) : SCREEN_W * 1.3,
+      duration: 280,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start(() => {
+      swipeX.setValue(0);
+      setActiveIdx((i) => (i + dir + nRef.current) % nRef.current);
+      swipingRef.current = false;
+    });
+  };
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) =>
+        !swipingRef.current && Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+      onPanResponderMove: (_, g) => { if (!swipingRef.current) swipeX.setValue(g.dx); },
+      onPanResponderRelease: (_, g) => {
+        if (swipingRef.current) return;
+        if (nRef.current < 2) { swipeX.setValue(0); return; }
+        const dir = g.dx < -SWIPE_THRESH ? 1 : g.dx > SWIPE_THRESH ? -1 : 0;
+        if (dir === 0) {
+          Animated.spring(swipeX, { toValue: 0, friction: 7, useNativeDriver: USE_NATIVE_DRIVER }).start();
+          return;
+        }
+        doSwipeRef.current?.(dir);
+      },
+    })
+  ).current;
+  const activeRotate = swipeX.interpolate({
+    inputRange: [-SCREEN_W, 0, SCREEN_W],
+    outputRange: ['-5deg', '0deg', '5deg'],
+    extrapolate: 'clamp',
+  });
+  const nextScale = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [1, 0.95, 1],
+    extrapolate: 'clamp',
+  });
+  const nextTransY = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [0, STACK_OFFSET, 0],
+    extrapolate: 'clamp',
+  });
+  const thirdScale = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [0.95, 0.90, 0.95],
+    extrapolate: 'clamp',
+  });
+  const thirdTransY = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [STACK_OFFSET, STACK_OFFSET * 2, STACK_OFFSET],
+    extrapolate: 'clamp',
+  });
+  if (n === 0) return null;
+  const containerH = STACK_CARD_H + STACK_OFFSET * (visibleCount - 1);
+  return (
+    <View style={styles.stackOuter}>
+      <View style={{ height: containerH, position: 'relative' }}>
+        {Array.from({ length: visibleCount }, (_, stackPos) => {
+          const depth = visibleCount - 1 - stackPos;
+          const cardIdx = (safeIdx + depth) % n;
+          const item = items[cardIdx];
+          let posStyle, animStyle;
+          if (depth === 0) {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = { transform: [{ translateX: swipeX }, { rotate: activeRotate }], zIndex: 10 };
+          } else if (depth === 1) {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = { transform: [{ scale: nextScale }, { translateY: nextTransY }], opacity: 0.95, zIndex: 9 };
+          } else {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = { transform: [{ scale: thirdScale }, { translateY: thirdTransY }], opacity: 0.9, zIndex: 8 };
+          }
+          return (
+            <Animated.View key={`pd${depth}`} style={[posStyle, animStyle]} {...(depth === 0 ? panResponder.panHandlers : {})}>
+              <PlayerCard
+                player={item}
+                stats={playerStats[item.id]}
+                onPress={depth === 0 ? () => onPressItem(item) : undefined}
+                onEdit={depth === 0 ? () => onEdit?.(item) : undefined}
+                onDelete={depth === 0 ? () => onDelete?.(item) : undefined}
+                variant="stack"
+                cardStyle={{ height: STACK_CARD_H }}
+              />
+            </Animated.View>
+          );
+        })}
+      </View>
+      {n > 1 && (
+        <View style={styles.stackNavRow}>
+          <TouchableOpacity onPress={() => doSwipeRef.current?.(-1)} style={styles.navBtn} hitSlop={10} activeOpacity={0.7}>
+            <Text style={styles.navBtnText}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.dotRow}>
+            {n <= 10 ? items.map((_, i) => <View key={i} style={[styles.dot, i === safeIdx && styles.dotActive]} />) : <Text style={styles.dotCount}>{safeIdx + 1} / {n}</Text>}
+          </View>
+          <TouchableOpacity onPress={() => doSwipeRef.current?.(1)} style={styles.navBtn} hitSlop={10} activeOpacity={0.7}>
+            <Text style={styles.navBtnText}>›</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function TournamentCardStack({ items, onPressItem, onDelete }) {
+  const n = items.length;
+  const nRef = useRef(n);
+  nRef.current = n;
+  const [activeIdx, setActiveIdx] = useState(0);
+  const safeIdx = n > 0 ? activeIdx % n : 0;
+  const swipingRef = useRef(false);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const visibleCount = Math.min(3, n);
+  const doSwipeRef = useRef(null);
+  doSwipeRef.current = (dir) => {
+    if (swipingRef.current || nRef.current < 2) return;
+    swipingRef.current = true;
+    Animated.timing(swipeX, {
+      toValue: dir > 0 ? -(SCREEN_W * 1.3) : SCREEN_W * 1.3,
+      duration: 280,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start(() => {
+      swipeX.setValue(0);
+      setActiveIdx((i) => (i + dir + nRef.current) % nRef.current);
+      swipingRef.current = false;
+    });
+  };
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) =>
+        !swipingRef.current && Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+      onPanResponderMove: (_, g) => { if (!swipingRef.current) swipeX.setValue(g.dx); },
+      onPanResponderRelease: (_, g) => {
+        if (swipingRef.current) return;
+        if (nRef.current < 2) { swipeX.setValue(0); return; }
+        const dir = g.dx < -SWIPE_THRESH ? 1 : g.dx > SWIPE_THRESH ? -1 : 0;
+        if (dir === 0) {
+          Animated.spring(swipeX, { toValue: 0, friction: 7, useNativeDriver: USE_NATIVE_DRIVER }).start();
+          return;
+        }
+        doSwipeRef.current?.(dir);
+      },
+    })
+  ).current;
+  const activeRotate = swipeX.interpolate({
+    inputRange: [-SCREEN_W, 0, SCREEN_W],
+    outputRange: ['-5deg', '0deg', '5deg'],
+    extrapolate: 'clamp',
+  });
+  const nextScale = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [1, 0.95, 1],
+    extrapolate: 'clamp',
+  });
+  const nextTransY = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [0, STACK_OFFSET, 0],
+    extrapolate: 'clamp',
+  });
+  const thirdScale = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [0.95, 0.90, 0.95],
+    extrapolate: 'clamp',
+  });
+  const thirdTransY = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [STACK_OFFSET, STACK_OFFSET * 2, STACK_OFFSET],
+    extrapolate: 'clamp',
+  });
+  if (n === 0) return null;
+  const containerH = STACK_CARD_H + STACK_OFFSET * (visibleCount - 1);
+  return (
+    <View style={styles.stackOuter}>
+      <View style={{ height: containerH, position: 'relative' }}>
+        {Array.from({ length: visibleCount }, (_, stackPos) => {
+          const depth = visibleCount - 1 - stackPos;
+          const cardIdx = (safeIdx + depth) % n;
+          const item = items[cardIdx];
+          let posStyle, animStyle;
+          if (depth === 0) {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = { transform: [{ translateX: swipeX }, { rotate: activeRotate }], zIndex: 10 };
+          } else if (depth === 1) {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = { transform: [{ scale: nextScale }, { translateY: nextTransY }], opacity: 0.95, zIndex: 9 };
+          } else {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = { transform: [{ scale: thirdScale }, { translateY: thirdTransY }], opacity: 0.9, zIndex: 8 };
+          }
+          return (
+            <Animated.View key={`td${depth}`} style={[posStyle, animStyle]} {...(depth === 0 ? panResponder.panHandlers : {})}>
+              <TournamentCard
+                tournament={item}
+                onPress={depth === 0 ? () => onPressItem(item) : undefined}
+                onDelete={depth === 0 ? () => onDelete?.(item) : undefined}
+                variant="stack"
+                cardStyle={{ height: STACK_CARD_H }}
+              />
+            </Animated.View>
+          );
+        })}
+      </View>
+      {n > 1 && (
+        <View style={styles.stackNavRow}>
+          <TouchableOpacity onPress={() => doSwipeRef.current?.(-1)} style={styles.navBtn} hitSlop={10} activeOpacity={0.7}>
+            <Text style={styles.navBtnText}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.dotRow}>
+            {n <= 10 ? items.map((_, i) => <View key={i} style={[styles.dot, i === safeIdx && styles.dotActive]} />) : <Text style={styles.dotCount}>{safeIdx + 1} / {n}</Text>}
+          </View>
+          <TouchableOpacity onPress={() => doSwipeRef.current?.(1)} style={styles.navBtn} hitSlop={10} activeOpacity={0.7}>
+            <Text style={styles.navBtnText}>›</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function MatchUpCard({ matchup, players, onPress, onAddDay, onDelete, cardStyle, variant }) {
   const dateLabel = matchup.lastPlayedDate ? matchup.lastPlayedDate.slice(0, 10) : 'No days yet';
   const h2h = matchup.h2h;
   const player1Wins = h2h ? h2h.wins : 0;
@@ -698,16 +1179,21 @@ function MatchUpCard({ matchup, players, onPress, onAddDay, cardStyle }) {
   const name1 = matchup.player1_name || '';
   const name2 = matchup.player2_name || '';
 
-  return (
-    <TouchableOpacity style={[styles.matchCard, cardStyle]} onPress={onPress} activeOpacity={0.7}>
-      <CardColorPulse />
-      <View style={styles.matchCardInner}>
-        <View style={styles.matchCardContentRow}>
-          <View style={styles.matchCardTextBlock}>
-            <View style={styles.matchCardHeader}>
-              <Text style={styles.matchCardVs} numberOfLines={2}>
-                {matchup.player1_name} vs {matchup.player2_name}
-              </Text>
+  const isStack = variant === 'stack';
+
+  if (isStack) {
+    return (
+      <TouchableOpacity
+        style={[styles.matchCardStack, cardStyle]}
+        onPress={onPress}
+        activeOpacity={0.7}
+      >
+        <View style={styles.matchCardStackInner}>
+          <View style={styles.matchCardStackHeader}>
+            <Text style={styles.matchCardStackVs} numberOfLines={2}>
+              {matchup.player1_name} vs {matchup.player2_name}
+            </Text>
+            <View style={styles.cardActionsRight}>
               <TouchableOpacity
                 style={styles.addBtn}
                 onPress={(e) => {
@@ -718,6 +1204,51 @@ function MatchUpCard({ matchup, players, onPress, onAddDay, cardStyle }) {
               >
                 <Text style={styles.addBtnText}>Add</Text>
               </TouchableOpacity>
+              {onDelete && (
+                <TouchableOpacity style={styles.cardDeleteBtn} onPress={(e) => { e.stopPropagation(); onDelete(); }} hitSlop={8}>
+                  <Text style={styles.cardDeleteBtnText}>Delete</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          <Text style={styles.matchCardStackDate}>Last played: {dateLabel}</Text>
+          <Text style={styles.matchCardStackH2h}>H2H: {h2hLabel}</Text>
+          <Text style={styles.matchCardStackTap}>Tap for stats · Add for new day</Text>
+          <View style={styles.matchCardStackCollageWrap}>
+            <MatchupAvatarCollage uri1={uri1} uri2={uri2} name1={name1} name2={name2} variant="splitSquare" size={88} />
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <TouchableOpacity style={[styles.matchCard, cardStyle]} onPress={onPress} activeOpacity={0.7}>
+      <CardColorPulse />
+      <View style={styles.matchCardInner}>
+        <View style={styles.matchCardContentRow}>
+          <View style={styles.matchCardTextBlock}>
+            <View style={styles.matchCardHeader}>
+              <Text style={styles.matchCardVs} numberOfLines={2}>
+                {matchup.player1_name} vs {matchup.player2_name}
+              </Text>
+              <View style={styles.cardActionsRight}>
+                <TouchableOpacity
+                  style={styles.addBtn}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    onAddDay?.();
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.addBtnText}>Add</Text>
+                </TouchableOpacity>
+                {onDelete && (
+                  <TouchableOpacity style={styles.cardDeleteBtn} onPress={(e) => { e.stopPropagation(); onDelete(); }} hitSlop={8}>
+                    <Text style={styles.cardDeleteBtnText}>Delete</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
             <Text style={styles.matchCardDate}>Last played: {dateLabel}</Text>
             <Text style={styles.matchCardH2h}>H2H: {h2hLabel}</Text>
@@ -732,9 +1263,7 @@ function MatchUpCard({ matchup, players, onPress, onAddDay, cardStyle }) {
   );
 }
 
-function MatchupAvatarCollage({ uri1, uri2, name1, name2 }) {
-  const size = 28;
-  const overlap = 10;
+function MatchupAvatarCollage({ uri1, uri2, name1, name2, size = 28, variant }) {
   const initials = (name) =>
     (name || '?')
       .split(' ')
@@ -742,6 +1271,43 @@ function MatchupAvatarCollage({ uri1, uri2, name1, name2 }) {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() || '')
       .join('') || '?';
+
+  // Stack card: square image split in half (left = p1, right = p2)
+  if (variant === 'splitSquare') {
+    const side = size;
+    const half = side / 2;
+    const fontSize = 18;
+    return (
+      <View style={[styles.collageSplitSquare, { width: side, height: side }]}>
+        <View style={[styles.collageSplitHalf, { width: half, height: side }]}>
+          {uri1 ? (
+            <Image source={{ uri: uri1 }} style={{ width: side, height: side }} resizeMode="cover" />
+          ) : (
+            <View style={[styles.collageSplitFallback, { width: half, height: side }]}>
+              <Text style={[styles.collageInitial, { fontSize }]} numberOfLines={1}>{initials(name1)}</Text>
+            </View>
+          )}
+        </View>
+        <View style={[styles.collageSplitHalf, { width: half, height: side }]}>
+          {uri2 ? (
+            <Image
+              source={{ uri: uri2 }}
+              style={{ width: side, height: side, position: 'absolute', right: 0 }}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[styles.collageSplitFallback, { width: half, height: side }]}>
+              <Text style={[styles.collageInitial, { fontSize }]} numberOfLines={1}>{initials(name2)}</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  // List card: overlapping circles
+  const overlap = Math.round(size * 0.36);
+  const fontSize = size <= 28 ? 10 : 14;
   return (
     <View style={[styles.collageContainer, { width: size * 2 - overlap, height: size }]}>
       <View style={[styles.collageAvatar, { width: size, height: size, borderRadius: size / 2, left: 0, zIndex: 2 }]}>
@@ -749,7 +1315,7 @@ function MatchupAvatarCollage({ uri1, uri2, name1, name2 }) {
           <Image source={{ uri: uri1 }} style={styles.collageImage} />
         ) : (
           <View style={styles.collageFallback}>
-            <Text style={styles.collageInitial} numberOfLines={1}>{initials(name1)}</Text>
+            <Text style={[styles.collageInitial, { fontSize }]} numberOfLines={1}>{initials(name1)}</Text>
           </View>
         )}
       </View>
@@ -758,7 +1324,7 @@ function MatchupAvatarCollage({ uri1, uri2, name1, name2 }) {
           <Image source={{ uri: uri2 }} style={styles.collageImage} />
         ) : (
           <View style={styles.collageFallback}>
-            <Text style={styles.collageInitial} numberOfLines={1}>{initials(name2)}</Text>
+            <Text style={[styles.collageInitial, { fontSize }]} numberOfLines={1}>{initials(name2)}</Text>
           </View>
         )}
       </View>
@@ -766,31 +1332,137 @@ function MatchupAvatarCollage({ uri1, uri2, name1, name2 }) {
   );
 }
 
-function PlayerCard({ player, stats, onPress }) {
+function PlayerAvatar({ uri, name, size }) {
+  const initials = (name || '?')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('');
+  if (uri) {
+    return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} resizeMode="cover" />;
+  }
+  return (
+    <View style={[styles.playerAvatarFallback, { width: size, height: size, borderRadius: size / 2 }]}>
+      <Text style={[styles.playerAvatarInitial, { fontSize: size * 0.4 }]} numberOfLines={1}>{initials || '?'}</Text>
+    </View>
+  );
+}
+
+function PlayerCard({ player, stats, onPress, onEdit, onDelete, variant = 'list', cardStyle }) {
   const statLine = stats
-    ? `${stats.matchesPlayed} M · ${stats.wins}W ${stats.losses}L${stats.matchesPlayed > 0 ? ` · ${stats.winPercentage.toFixed(0)}%` : ''}`
+    ? `${stats.matchesPlayed ?? 0} M · ${stats.wins ?? 0}W ${stats.losses ?? 0}L${(stats.matchesPlayed ?? 0) > 0 ? ` · ${(stats.winPercentage ?? 0).toFixed(0)}%` : ''}`
     : null;
+  const isStack = variant === 'stack';
+
+  if (isStack) {
+    return (
+      <TouchableOpacity style={[styles.playerCardStack, cardStyle]} onPress={onPress} activeOpacity={0.7}>
+        <View style={styles.playerCardStackInner}>
+          <View style={styles.playerCardStackRow}>
+            <View style={styles.playerCardStackText}>
+              <View style={styles.playerCardStackHeader}>
+                <Text style={[styles.playerCardStackName, styles.cardTitleFlex]} numberOfLines={2}>{player.name}</Text>
+                {(onEdit || onDelete) && (
+                  <View style={styles.cardActionsRight}>
+                    {onEdit && (
+                      <TouchableOpacity style={styles.cardEditBtn} onPress={(e) => { e.stopPropagation(); onEdit(); }} hitSlop={8}>
+                        <Text style={styles.cardEditBtnText}>Edit</Text>
+                      </TouchableOpacity>
+                    )}
+                    {onDelete && (
+                      <TouchableOpacity style={styles.cardDeleteBtn} onPress={(e) => { e.stopPropagation(); onDelete(); }} hitSlop={8}>
+                        <Text style={styles.cardDeleteBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </View>
+              {statLine ? <Text style={styles.playerCardStackStats} numberOfLines={1}>{statLine}</Text> : null}
+              {player.description ? (
+                <Text style={styles.playerCardStackDesc} numberOfLines={2}>{player.description}</Text>
+              ) : null}
+              <Text style={styles.playerCardStackTap}>Tap for profile</Text>
+            </View>
+            <View style={styles.playerCardStackAvatarWrap}>
+              <PlayerAvatar uri={player.profile_image} name={player.name} size={92} />
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <TouchableOpacity style={styles.playerCard} onPress={onPress} activeOpacity={0.7}>
       <CardColorPulse />
       <View style={styles.playerCardInner}>
-        <Text style={styles.playerCardName} numberOfLines={1}>{player.name}</Text>
-        {statLine ? <Text style={styles.playerCardStats} numberOfLines={1}>{statLine}</Text> : null}
+        <View style={styles.playerCardListLeft}>
+          <View style={styles.playerCardListHeader}>
+            <Text style={[styles.playerCardName, styles.cardTitleFlex]} numberOfLines={1}>{player.name}</Text>
+            {(onEdit || onDelete) && (
+              <View style={styles.cardActionsRight}>
+                {onEdit && (
+                  <TouchableOpacity style={styles.cardEditBtn} onPress={(e) => { e.stopPropagation(); onEdit(); }} hitSlop={8}>
+                    <Text style={styles.cardEditBtnText}>Edit</Text>
+                  </TouchableOpacity>
+                )}
+                {onDelete && (
+                  <TouchableOpacity style={styles.cardDeleteBtn} onPress={(e) => { e.stopPropagation(); onDelete(); }} hitSlop={8}>
+                    <Text style={styles.cardDeleteBtnText}>Delete</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+          {statLine ? <Text style={styles.playerCardStats} numberOfLines={1}>{statLine}</Text> : null}
+        </View>
+        <View style={styles.playerCardListAvatar}>
+          <PlayerAvatar uri={player.profile_image} name={player.name} size={40} />
+        </View>
       </View>
     </TouchableOpacity>
   );
 }
 
-function TournamentCard({ tournament, onPress }) {
+function TournamentCard({ tournament, onPress, onDelete, variant = 'list', cardStyle }) {
   const isComplete = tournament.status === 'complete';
   const formatLabel = tournament.format === 'round_robin' ? `Round robin · ${tournament.draw_size}` : `${tournament.draw_size}-draw`;
   const metaParts = [formatLabel, isComplete ? 'Complete' : 'Ongoing'];
   if (tournament.date) metaParts.push(tournament.date);
+  const isStack = variant === 'stack';
+
+  if (isStack) {
+    return (
+      <TouchableOpacity style={[styles.tournamentCardStack, isComplete && styles.tournamentCardComplete, cardStyle]} onPress={onPress} activeOpacity={0.7}>
+        <View style={styles.tournamentCardStackInner}>
+          <View style={styles.tournamentCardStackHeader}>
+            <Text style={[styles.tournamentCardStackName, styles.cardTitleFlex]} numberOfLines={2}>{tournament.name}</Text>
+            {onDelete && (
+              <TouchableOpacity style={styles.cardDeleteBtn} onPress={(e) => { e.stopPropagation(); onDelete(); }} hitSlop={8}>
+                <Text style={styles.cardDeleteBtnText}>Delete</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <Text style={styles.tournamentCardStackMeta} numberOfLines={1}>{metaParts.join(' · ')}</Text>
+          <Text style={styles.tournamentCardStackTap}>Tap to open bracket</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <TouchableOpacity style={[styles.tournamentCard, isComplete && styles.tournamentCardComplete]} onPress={onPress} activeOpacity={0.7}>
       <CardColorPulse />
       <View style={styles.tournamentCardInner}>
-        <Text style={styles.tournamentCardName} numberOfLines={1}>{tournament.name}</Text>
+        <View style={styles.tournamentCardHeader}>
+          <Text style={[styles.tournamentCardName, styles.cardTitleFlex]} numberOfLines={1}>{tournament.name}</Text>
+          {onDelete && (
+            <TouchableOpacity style={styles.cardDeleteBtn} onPress={(e) => { e.stopPropagation(); onDelete(); }} hitSlop={8}>
+              <Text style={styles.cardDeleteBtnText}>Delete</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <Text style={styles.tournamentCardMeta} numberOfLines={1}>
           {metaParts.join(' · ')}
         </Text>
@@ -933,6 +1605,29 @@ const styles = StyleSheet.create({
     elevation: 3,
     overflow: 'hidden',
   },
+  matchCardStack: {
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.98)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  matchCardStackInner: { padding: 16, flex: 1, justifyContent: 'space-between' },
+  matchCardStackHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  matchCardStackVs: { fontSize: 16, fontWeight: '700', color: '#1a1a1a', flex: 1 },
+  matchCardStackDate: { fontSize: 13, color: '#666', marginTop: 6 },
+  matchCardStackH2h: { fontSize: 13, color: '#1a472a', marginTop: 2, fontWeight: '600' },
+  matchCardStackTap: { fontSize: 11, color: '#1a472a', marginTop: 4, opacity: 0.9 },
+  matchCardStackCollageWrap: {
+    marginTop: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   matchCardInner: { padding: 14 },
   matchCardContentRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   matchCardTextBlock: { flex: 1, minWidth: 0 },
@@ -944,6 +1639,17 @@ const styles = StyleSheet.create({
   matchCardH2h: { fontSize: 12, color: '#1a472a', marginTop: 2, fontWeight: '600' },
   matchCardTap: { fontSize: 11, color: '#1a472a', marginTop: 4, opacity: 0.9 },
   matchCardCollageWrap: { justifyContent: 'center', alignItems: 'center' },
+  cardActionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 },
+  cardActionsRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardEditBtn: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(26,71,42,0.12)' },
+  cardEditBtnText: { fontSize: 12, fontWeight: '600', color: '#1a472a' },
+  cardDeleteBtn: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(197,48,48,0.12)' },
+  cardDeleteBtnText: { fontSize: 12, fontWeight: '600', color: '#c53030' },
+  cardTitleFlex: { flex: 1, minWidth: 0 },
+  playerCardStackHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  playerCardListHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
+  tournamentCardStackHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  tournamentCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
   collageContainer: { position: 'relative' },
   collageAvatar: {
     position: 'absolute',
@@ -960,6 +1666,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   collageInitial: { fontSize: 10, fontWeight: '700', color: '#1a472a' },
+  collageSplitSquare: {
+    flexDirection: 'row',
+    overflow: 'hidden',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.95)',
+  },
+  collageSplitHalf: { overflow: 'hidden' },
+  collageSplitFallback: {
+    backgroundColor: '#e2ebdf',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   playerCard: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
@@ -973,9 +1692,33 @@ const styles = StyleSheet.create({
     elevation: 3,
     overflow: 'hidden',
   },
-  playerCardInner: { padding: 14 },
+  playerCardInner: { padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  playerCardListLeft: { flex: 1, minWidth: 0 },
+  playerCardListAvatar: {},
   playerCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
   playerCardStats: { fontSize: 12, color: '#666', marginTop: 4 },
+  playerAvatarFallback: { backgroundColor: '#e2ebdf', alignItems: 'center', justifyContent: 'center' },
+  playerAvatarInitial: { fontWeight: '700', color: '#1a472a' },
+  playerCardStack: {
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.98)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  playerCardStackInner: { padding: 16, flex: 1, justifyContent: 'center' },
+  playerCardStackRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  playerCardStackText: { flex: 1, minWidth: 0 },
+  playerCardStackName: { fontSize: 18, fontWeight: '700', color: '#1a1a1a' },
+  playerCardStackStats: { fontSize: 13, color: '#666', marginTop: 6 },
+  playerCardStackDesc: { fontSize: 12, color: '#555', marginTop: 4, fontStyle: 'italic' },
+  playerCardStackTap: { fontSize: 11, color: '#1a472a', marginTop: 8, opacity: 0.9 },
+  playerCardStackAvatarWrap: {},
   tournamentCard: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
@@ -993,6 +1736,22 @@ const styles = StyleSheet.create({
   tournamentCardInner: { padding: 14 },
   tournamentCardName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
   tournamentCardMeta: { fontSize: 12, color: '#666', marginTop: 4 },
+  tournamentCardStack: {
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.98)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  tournamentCardStackInner: { padding: 20, flex: 1, justifyContent: 'center' },
+  tournamentCardStackName: { fontSize: 18, fontWeight: '700', color: '#1a1a1a' },
+  tournamentCardStackMeta: { fontSize: 13, color: '#666', marginTop: 8 },
+  tournamentCardStackTap: { fontSize: 11, color: '#1a472a', marginTop: 12, opacity: 0.9 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalCard: {
     backgroundColor: '#fff',

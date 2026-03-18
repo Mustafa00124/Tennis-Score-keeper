@@ -19,6 +19,91 @@ npx expo start
 
 Then open in the Expo Go app (iOS/Android) or use a simulator.
 
+## Building the APK
+
+To build an installable Android APK (e.g. for sideloading or testing on device/emulator), use [EAS Build](https://docs.expo.dev/build/introduction). The steps below assume you have Node.js and npm installed.
+
+### 1. Install EAS CLI
+
+```bash
+npm install -g eas-cli
+```
+
+### 2. Log in to Expo
+
+```bash
+eas login
+```
+
+Create an [Expo account](https://expo.dev/signup) if you don’t have one.
+
+### 3. Configure the project for EAS Build (first time only)
+
+From the project root, run:
+
+```bash
+eas build:configure
+```
+
+This creates `eas.json`. To produce an **APK** (instead of an AAB), ensure a build profile outputs APK. For example, in `eas.json`:
+
+```json
+{
+  "build": {
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {}
+  }
+}
+```
+
+Use the `preview` profile for APK builds.
+
+### 4. Build the APK
+
+```bash
+eas build -p android --profile preview
+```
+
+EAS will build in the cloud. When it finishes, you get a link to download the `.apk` file.
+
+### 5. Install the build
+
+**On an Android emulator (after the build completes):**
+
+```bash
+eas build:run -p android
+```
+
+To install the latest build without choosing from a list:
+
+```bash
+eas build:run -p android --latest
+```
+
+**On a physical device:**
+
+- Download the APK from the build page (link shown when the build completes) and open it on your device, or  
+- Download the APK to your computer, connect the device with USB (with USB debugging enabled), then run:
+
+```bash
+adb install path/to/the/file.apk
+```
+
+### Commands summary
+
+| Step              | Command |
+|-------------------|--------|
+| Install EAS CLI   | `npm install -g eas-cli` |
+| Log in            | `eas login` |
+| Configure (1x)    | `eas build:configure` |
+| Build APK         | `eas build -p android --profile preview` |
+| Install on emulator | `eas build:run -p android --latest` |
+| Install via ADB   | `adb install path/to/the/file.apk` |
+
 ## Tech stack
 
 - **Expo** (~52) with React Native
@@ -27,9 +112,11 @@ Then open in the Expo Go app (iOS/Android) or use a simulator.
 
 Data is stored in SQLite on device. The structure (players, matches, set_scores) is ready for future expansion (e.g. cloud sync or more advanced stats).
 
+**Stats and deletes:** All stats (wins, losses, H2H, matchup stats, tournament standings) are computed from the database when a screen loads. There is no separate stats cache. So when you delete a player, match, or tournament, or edit/remove a set and save, the next time you open or return to Home, Player detail, Matchup stats, or Tournament detail, that screen runs `load()` again (via `useFocusEffect`) and shows updated data. Stats will reflect the new state immediately after you navigate back.
+
 ## Project structure
 
 - `App.js` – Entry, wraps app in navigation and safe area.
 - `src/db/database.native.js` / `database.web.js` – SQLite (native) or localStorage (web); same API for players, matches, stats, tournaments.
 - `src/navigation/AppNavigator.js` – Native stack (Home, MatchDetail, MatchupStats, PlayerDetail, NewTournament, TournamentDetail).
-- `src/screens/` – HomeScreen, MatchDetailScreen, MatchupStatsScreen, PlayerDetailScreen, PlayersScreen, NewTournamentScreen, TournamentDetailScreen.
+- `src/screens/` – HomeScreen, MatchDetailScreen, MatchupStatsScreen, MatchViewScreen, PlayerDetailScreen, NewTournamentScreen, TournamentDetailScreen.
