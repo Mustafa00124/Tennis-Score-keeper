@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { getMatchWithDetails, updateMatch, getSetScoresForMatch } from '../db/database';
+import { getMatchWithDetails, updateMatch, getSetScoresForMatch, getMatchByPlayersAndDate, deleteMatch } from '../db/database';
 import { gamesInValidRange, setNeedsTiebreak, isSetValidForSave, isSetComplete } from '../utils/tennisScoring';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -149,21 +149,58 @@ export default function MatchDetailScreen({ route, navigation }) {
         return;
       }
     }
-    setSaving(true);
-    try {
-      await updateMatch(matchId, {
-        datePlayed: datePlayed.trim() || '',
-        setScores: validSets,
-        remarks: remarks.trim() || null,
-        images: images.length ? images : null,
-      });
-      navigation.goBack();
-    } catch (e) {
-      Alert.alert('Error', e.message || 'Could not save');
-    } finally {
-      setSaving(false);
+
+    const dateStr = (datePlayed.trim() || '').slice(0, 10);
+    const payload = {
+      datePlayed: datePlayed.trim() || '',
+      setScores: validSets,
+      remarks: remarks.trim() || null,
+      images: images.length ? images : null,
+    };
+
+    const performSaveCurrent = async () => {
+      setSaving(true);
+      try {
+        await updateMatch(matchId, payload);
+        navigation.goBack();
+      } catch (e) {
+        Alert.alert('Error', e.message || 'Could not save');
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    const performReplace = async (existingMatchId) => {
+      setSaving(true);
+      try {
+        await updateMatch(existingMatchId, payload);
+        await deleteMatch(matchId);
+        navigation.goBack();
+      } catch (e) {
+        Alert.alert('Error', e.message || 'Could not save');
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    if (dateStr && detail?.player1_id != null && detail?.player2_id != null) {
+      const existing = await getMatchByPlayersAndDate(detail.player1_id, detail.player2_id, dateStr);
+      if (existing && existing.id !== matchId) {
+        Alert.alert(
+          'Date already added',
+          'This date is already added for this matchup. Do you want to replace the existing entry or add as a separate one?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Replace', onPress: () => performReplace(existing.id) },
+            { text: 'Add', onPress: () => performSaveCurrent() },
+          ]
+        );
+        return;
+      }
     }
-  }, [matchId, datePlayed, sets, remarks, images, getValidSets, navigation]);
+
+    await performSaveCurrent();
+  }, [matchId, datePlayed, sets, remarks, images, getValidSets, navigation, detail]);
 
   if (!detail) {
     return <Text style={styles.loading}>Loading…</Text>;

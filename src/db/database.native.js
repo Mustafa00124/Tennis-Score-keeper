@@ -123,6 +123,18 @@ export async function getDb() {
   try {
     await db.execAsync('ALTER TABLE tournaments ADD COLUMN format TEXT');
   } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN remark TEXT');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN score TEXT');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN match_date TEXT');
+  } catch (_) {}
+  try {
+    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN remarks TEXT');
+  } catch (_) {}
   return db;
 }
 
@@ -132,7 +144,7 @@ function isValidDrawSize(n) {
 }
 
 function isValidRoundRobinSize(n) {
-  return n >= 2 && n <= 20;
+  return n >= 2 && n <= 50;
 }
 
 export async function getAllTournaments() {
@@ -156,7 +168,7 @@ export async function createTournament(name, drawSize, opts = {}) {
   const format = opts.format === 'round_robin' ? 'round_robin' : 'knockout';
   const size = parseInt(drawSize, 10) || (format === 'round_robin' ? 4 : 8);
   if (format === 'knockout' && !isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
-  if (format === 'round_robin' && !isValidRoundRobinSize(size)) throw new Error('Number of players must be 2–20 for round robin');
+  if (format === 'round_robin' && !isValidRoundRobinSize(size)) throw new Error('Number of players must be 2–50 for round robin');
   const date = (opts.date || '').trim() || null;
   const description = (opts.description || '').trim() || null;
   const remarks = (opts.remarks || '').trim() || null;
@@ -230,18 +242,24 @@ export async function getTournamentParticipants(tournamentId) {
   }));
 }
 
-/** Circle method: player 0 fixed, others rotate. Returns [{ round, i, j }] with i < j. */
+/** Circle method: player 0 fixed, others rotate. Returns [{ round, i, j }] with i < j. For odd n, uses bye (index n) then filters so every real pair plays once. */
 function roundRobinPairings(n) {
+  if (n < 2) return [];
+  const useBye = n % 2 === 1;
+  const N = useBye ? n + 1 : n;
   const pairs = [];
-  const rounds = n - 1;
-  const half = Math.floor(n / 2);
+  const rounds = N - 1;
+  const half = Math.floor(N / 2);
   for (let r = 0; r < rounds; r++) {
     pairs.push({ round: r, i: 0, j: r + 1 });
     for (let k = 1; k < half; k++) {
-      const a = (r + k) % (n - 1) + 1;
-      const b = (r + n - 1 - k) % (n - 1) + 1;
+      const a = (r + k) % (N - 1) + 1;
+      const b = (r + N - 1 - k) % (N - 1) + 1;
       pairs.push({ round: r, i: Math.min(a, b), j: Math.max(a, b) });
     }
+  }
+  if (useBye) {
+    return pairs.filter((p) => p.i !== n && p.j !== n);
   }
   return pairs;
 }
@@ -369,7 +387,7 @@ export async function getTournamentWithBracket(tournamentId) {
   return { tournament, participants, matches: matchesWithNames };
 }
 
-export async function setTournamentMatchWinner(tournamentMatchId, winnerParticipantId) {
+export async function setTournamentMatchWinner(tournamentMatchId, winnerParticipantId, details = {}) {
   const database = await getDb();
   const row = await database.getFirstAsync(
     'SELECT id, tournament_id, round, match_index_in_round FROM tournament_matches WHERE id = ?',
@@ -380,27 +398,35 @@ export async function setTournamentMatchWinner(tournamentMatchId, winnerParticip
     winnerParticipantId,
     tournamentMatchId,
   ]);
+  const { score, match_date, remarks } = details;
+  if (score != null && score !== '') {
+    await database.runAsync('UPDATE tournament_matches SET score = ? WHERE id = ?', [String(score).trim(), tournamentMatchId]);
+  }
+  if (match_date != null && match_date !== '') {
+    await database.runAsync('UPDATE tournament_matches SET match_date = ? WHERE id = ?', [String(match_date).trim(), tournamentMatchId]);
+  }
+  if (remarks != null && remarks !== '') {
+    await database.runAsync('UPDATE tournament_matches SET remarks = ? WHERE id = ?', [String(remarks).trim(), tournamentMatchId]);
+  }
   const tournament = await database.getFirstAsync('SELECT format FROM tournaments WHERE id = ?', [row.tournament_id]);
   if (tournament?.format === 'round_robin') return;
-  const nextRound = row.round - 1;
-  if (nextRound < 0) {
-    const t = await database.getFirstAsync('SELECT id FROM tournaments WHERE id = ?', [row.tournament_id]);
-    if (t) await database.runAsync("UPDATE tournaments SET status = 'complete' WHERE id = ?", [row.tournament_id]);
-    return;
-  }
+  const nextRound = row.round + 1;
   const nextMatchIndex = Math.floor(row.match_index_in_round / 2);
   const slot = row.match_index_in_round % 2;
   const nextMatch = await database.getFirstAsync(
     'SELECT id FROM tournament_matches WHERE tournament_id = ? AND round = ? AND match_index_in_round = ?',
     [row.tournament_id, nextRound, nextMatchIndex]
   );
-  if (nextMatch) {
-    const col = slot === 0 ? 'player1_participant_id' : 'player2_participant_id';
-    await database.runAsync(`UPDATE tournament_matches SET ${col} = ? WHERE id = ?`, [
-      winnerParticipantId,
-      nextMatch.id,
-    ]);
+  if (!nextMatch) {
+    const t = await database.getFirstAsync('SELECT id FROM tournaments WHERE id = ?', [row.tournament_id]);
+    if (t) await database.runAsync("UPDATE tournaments SET status = 'complete' WHERE id = ?", [row.tournament_id]);
+    return;
   }
+  const col = slot === 0 ? 'player1_participant_id' : 'player2_participant_id';
+  await database.runAsync(`UPDATE tournament_matches SET ${col} = ? WHERE id = ?`, [
+    winnerParticipantId,
+    nextMatch.id,
+  ]);
 }
 
 export async function linkTournamentMatchToAppMatch(tournamentMatchId, matchId) {
@@ -409,6 +435,12 @@ export async function linkTournamentMatchToAppMatch(tournamentMatchId, matchId) 
     matchId,
     tournamentMatchId,
   ]);
+}
+
+export async function setTournamentMatchRemark(tournamentMatchId, remark) {
+  const database = await getDb();
+  const value = (remark != null && String(remark).trim() !== '') ? String(remark).trim() : null;
+  await database.runAsync('UPDATE tournament_matches SET remark = ? WHERE id = ?', [value, tournamentMatchId]);
 }
 
 export async function getTournamentMatchById(tournamentMatchId) {
@@ -559,6 +591,28 @@ export async function updateMatch(matchId, { datePlayed, setScores, remarks, ima
       );
     }
   }
+}
+
+/** Find a match for the same two players (in either order) on the same date (YYYY-MM-DD). Returns first match or null. */
+export async function getMatchByPlayersAndDate(player1Id, player2Id, dateStr) {
+  if (!dateStr || dateStr.length < 10) return null;
+  const database = await getDb();
+  const prefix = dateStr.slice(0, 10);
+  const rows = await database.getAllAsync(
+    `SELECT id, player1_id, player2_id, date_played FROM matches
+     WHERE ((player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?))
+     AND (date_played = ? OR date_played LIKE ?)
+     ORDER BY id DESC LIMIT 1`,
+    [player1Id, player2Id, player2Id, player1Id, prefix, prefix + '%']
+  );
+  return rows[0] ?? null;
+}
+
+/** Delete a match and its set_scores. */
+export async function deleteMatch(matchId) {
+  const database = await getDb();
+  await database.runAsync('DELETE FROM set_scores WHERE match_id = ?', [matchId]);
+  await database.runAsync('DELETE FROM matches WHERE id = ?', [matchId]);
 }
 
 export async function getMatchesForPlayer(playerId) {

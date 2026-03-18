@@ -4,11 +4,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   getHeadToHead,
   getMatchesForPlayer,
-  getMatchResult,
   getMatchupDetailedStats,
   getMatchupDayByDay,
   createMatchup,
+  getMatchWithDetails,
 } from '../db/database';
+import { setNeedsTiebreak } from '../utils/tennisScoring';
 
 const BAR_HEIGHT_PER_SET = 10;
 const DAY_COLUMN_WIDTH = 26;
@@ -124,6 +125,7 @@ export default function MatchupStatsScreen({ route, navigation }) {
   const [activeTab, setActiveTab] = useState('matches');
   const [h2h, setH2h] = useState(null);
   const [matches, setMatches] = useState([]);
+  const [matchDetails, setMatchDetails] = useState({});
   const [detailedStats, setDetailedStats] = useState(null);
   const [dayByDay, setDayByDay] = useState([]);
 
@@ -140,6 +142,12 @@ export default function MatchupStatsScreen({ route, navigation }) {
       .filter((m) => m && (m.player1_id === player2Id || m.player2_id === player2Id))
       .sort((a, b) => (a.date_played || '').localeCompare(b.date_played || '') || (a.id - b.id));
     setMatches(between);
+    const details = await Promise.all(between.map((m) => getMatchWithDetails(m.id)));
+    const byId = {};
+    details.forEach((d, i) => {
+      if (d && between[i]) byId[between[i].id] = d;
+    });
+    setMatchDetails(byId);
     setDetailedStats(stats);
     setDayByDay(days);
   }, [player1Id, player2Id]);
@@ -157,7 +165,7 @@ export default function MatchupStatsScreen({ route, navigation }) {
 
   const openMatch = useCallback(
     (matchId) => {
-      navigation.navigate('MatchDetail', { matchId });
+      navigation.navigate('MatchView', { matchId });
     },
     [navigation]
   );
@@ -210,7 +218,7 @@ export default function MatchupStatsScreen({ route, navigation }) {
             activeOpacity={0.85}
           >
             <Text style={[styles.tabText, activeTab === 'graph' ? styles.tabTextActive : styles.tabTextInactive]}>
-              Graph
+              Calendar
             </Text>
           </TouchableOpacity>
         </View>
@@ -237,8 +245,7 @@ export default function MatchupStatsScreen({ route, navigation }) {
               <MatchRow
                 key={m.id}
                 match={m}
-                player1Id={player1Id}
-                player2Id={player2Id}
+                detail={matchDetails[m.id]}
                 onPress={() => openMatch(m.id)}
               />
             ))
@@ -368,7 +375,7 @@ export default function MatchupStatsScreen({ route, navigation }) {
                               <TouchableOpacity
                                 key={day.dateStr}
                                 style={styles.graphDayColumn}
-                                onPress={day.matchId ? () => navigation.navigate('MatchDetail', { matchId: day.matchId }) : undefined}
+                                onPress={day.matchId ? () => navigation.navigate('MatchView', { matchId: day.matchId }) : undefined}
                                 activeOpacity={day.matchId ? 0.8 : 1}
                                 disabled={!day.matchId}
                               >
@@ -408,27 +415,40 @@ export default function MatchupStatsScreen({ route, navigation }) {
   );
 }
 
-function MatchRow({ match, player1Id, player2Id, onPress }) {
-  const [result, setResult] = useState(null);
-  React.useEffect(() => {
-    if (!match?.id) return;
-    let cancelled = false;
-    getMatchResult(match.id).then((r) => {
-      if (!cancelled) setResult(r);
-    });
-    return () => { cancelled = true; };
-  }, [match?.id]);
+/** Format one set for list display */
+function formatSetForList(s) {
+  if (!s || s.games_player1 == null || s.games_player2 == null) return '';
+  const g1 = Number(s.games_player1);
+  const g2 = Number(s.games_player2);
+  if (setNeedsTiebreak(g1, g2) && (s.tiebreak_player1 != null || s.tiebreak_player2 != null)) {
+    const tb = g1 > g2 ? s.tiebreak_player1 : s.tiebreak_player2;
+    return `${Math.max(g1, g2)}-${Math.min(g1, g2)}${tb != null && tb !== '' ? `(${tb})` : ''}`;
+  }
+  return `${g1}-${g2}`;
+}
 
+function formatSetsForList(sets) {
+  if (!sets || !sets.length) return '—';
+  return sets.map(formatSetForList).filter(Boolean).join(' ');
+}
+
+function MatchRow({ match, detail, onPress }) {
   if (!match) return null;
   const dateLabel = match.date_played || 'No date';
-  const scoreLabel = result
-    ? `${result.setsPlayer1}-${result.setsPlayer2} sets`
-    : '—';
+  const setScoresStr = detail?.sets ? formatSetsForList(detail.sets) : '—';
+  const remarks = (detail?.remarks || '').trim();
 
   return (
     <TouchableOpacity style={styles.matchRowGlass} onPress={onPress} activeOpacity={0.7}>
-      <Text style={styles.matchDate}>{dateLabel}</Text>
-      <Text style={styles.matchScore}>{scoreLabel}</Text>
+      <View style={styles.matchRowLeft}>
+        <Text style={styles.matchSetScores} numberOfLines={1}>{setScoresStr}</Text>
+        <View style={styles.matchRowMeta}>
+          <Text style={styles.matchDate}>{dateLabel}</Text>
+          {remarks.length > 0 && (
+            <Text style={styles.matchRemarks} numberOfLines={1}>{remarks}</Text>
+          )}
+        </View>
+      </View>
       <Text style={styles.matchChevron}>›</Text>
     </TouchableOpacity>
   );
@@ -542,23 +562,26 @@ const styles = StyleSheet.create({
   matchRowGlass: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.72)',
+    backgroundColor: 'rgba(255,255,255,0.78)',
     borderRadius: 12,
     padding: 14,
-    marginBottom: 8,
+    marginBottom: 10,
     borderLeftWidth: 4,
     borderLeftColor: '#1a472a',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.85)',
+    borderColor: 'rgba(255,255,255,0.9)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.12,
     shadowRadius: 6,
     elevation: 3,
   },
-  matchDate: { fontSize: 15, color: '#333', flex: 1 },
-  matchScore: { fontSize: 14, color: '#666', marginRight: 8 },
-  matchChevron: { fontSize: 18, color: '#1a472a', fontWeight: '700' },
+  matchRowLeft: { flex: 1, minWidth: 0, marginRight: 10 },
+  matchSetScores: { fontSize: 16, fontWeight: '700', color: '#1a472a', marginBottom: 4 },
+  matchRowMeta: {},
+  matchDate: { fontSize: 14, color: '#444' },
+  matchRemarks: { fontSize: 12, color: '#666', fontStyle: 'italic', marginTop: 2 },
+  matchChevron: { fontSize: 20, color: '#1a472a', fontWeight: '700' },
   statsTableGlass: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,

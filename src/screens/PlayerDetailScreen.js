@@ -198,7 +198,7 @@ export default function PlayerDetailScreen({ route, navigation }) {
                 opponent={opponent}
                 isPlayer1={isPlayer1}
                 playerId={playerId}
-                onPress={() => navigation.navigate('MatchDetail', { matchId: item.id })}
+                onPress={() => navigation.navigate('MatchView', { matchId: item.id })}
               />
             );
           })

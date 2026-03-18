@@ -20,7 +20,7 @@ import {
 } from '../db/database';
 
 const DRAW_SIZES = [4, 8, 16];
-const ROUND_ROBIN_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 20];
+const ROUND_ROBIN_MAX_PLAYERS = 50;
 const FORMAT_KNOCKOUT = 'knockout';
 const FORMAT_ROUND_ROBIN = 'round_robin';
 
@@ -33,14 +33,15 @@ function shuffle(arr) {
   return a;
 }
 
-export default function NewTournamentScreen({ navigation }) {
-  const [step, setStep] = useState(1);
-  const [name, setName] = useState('');
-  const [format, setFormat] = useState(FORMAT_KNOCKOUT);
+export default function NewTournamentScreen({ navigation, route, onDismiss, onSuccess }) {
+  const params = route?.params ?? {};
+  const fromModal = params.name != null && params.format != null;
+  const [step, setStep] = useState(fromModal ? 1 : 1);
+  const [name, setName] = useState(fromModal ? (params.name || '') : '');
+  const [format, setFormat] = useState(params.format === 'round_robin' ? FORMAT_ROUND_ROBIN : FORMAT_KNOCKOUT);
   const [drawSize, setDrawSize] = useState(8);
   const [date, setDate] = useState('');
   const [description, setDescription] = useState('');
-  const [remarks, setRemarks] = useState('');
   const [images, setImages] = useState([]);
   const [players, setPlayers] = useState([]);
   const [participantSlots, setParticipantSlots] = useState([]);
@@ -56,7 +57,7 @@ export default function NewTournamentScreen({ navigation }) {
     loadPlayers();
   }, [loadPlayers]);
 
-  const maxPlayers = drawSize;
+  const maxPlayers = format === FORMAT_KNOCKOUT ? drawSize : ROUND_ROBIN_MAX_PLAYERS;
   const addAppPlayer = useCallback(
     (player) => {
       if (participantSlots.length >= maxPlayers) return;
@@ -118,14 +119,13 @@ export default function NewTournamentScreen({ navigation }) {
   const canProceedToDraw =
     format === FORMAT_KNOCKOUT
       ? participantSlots.length === drawSize
-      : participantSlots.length >= 2 && participantSlots.length <= drawSize;
+      : participantSlots.length >= 2;
 
   const getTournamentDetails = useCallback(() => ({
     date: date.trim() || undefined,
     description: description.trim() || undefined,
-    remarks: remarks.trim() || undefined,
     images: images.length ? images : undefined,
-  }), [date, description, remarks, images]);
+  }), [date, description, images]);
 
   const createOpts = useCallback(
     () => ({
@@ -145,7 +145,7 @@ export default function NewTournamentScreen({ navigation }) {
     if (!canProceedToDraw) {
       Alert.alert(
         'Fill draw',
-        format === FORMAT_KNOCKOUT ? `Add exactly ${drawSize} players.` : `Add between 2 and ${drawSize} players.`
+        format === FORMAT_KNOCKOUT ? `Add exactly ${drawSize} players.` : 'Add at least 2 players.'
       );
       return;
     }
@@ -168,12 +168,13 @@ export default function NewTournamentScreen({ navigation }) {
       const order = format === FORMAT_KNOCKOUT ? shuffle(participantIds) : participantIds;
       await setTournamentDraw(tournamentId, order);
       setSaving(false);
-      navigation.replace('TournamentDetail', { tournamentId, tournamentName: name.trim() });
+      if (onSuccess) onSuccess(tournamentId, name.trim());
+      else navigation?.replace?.('TournamentDetail', { tournamentId, tournamentName: name.trim() });
     } catch (e) {
       setSaving(false);
       Alert.alert('Error', e.message || 'Could not create tournament');
     }
-  }, [name, drawSize, format, participantSlots, participantCount, canProceedToDraw, navigation, createOpts]);
+  }, [name, drawSize, format, participantSlots, participantCount, canProceedToDraw, navigation, createOpts, onSuccess]);
 
   const handleCreateWithManualDraw = useCallback(async () => {
     if (!name.trim()) {
@@ -183,7 +184,7 @@ export default function NewTournamentScreen({ navigation }) {
     if (!canProceedToDraw) {
       Alert.alert(
         'Fill draw',
-        format === FORMAT_KNOCKOUT ? `Add exactly ${drawSize} players.` : `Add between 2 and ${drawSize} players.`
+        format === FORMAT_KNOCKOUT ? `Add exactly ${drawSize} players.` : 'Add at least 2 players.'
       );
       return;
     }
@@ -205,12 +206,13 @@ export default function NewTournamentScreen({ navigation }) {
       }
       await setTournamentDraw(tournamentId, participantIds);
       setSaving(false);
-      navigation.replace('TournamentDetail', { tournamentId, tournamentName: name.trim() });
+      if (onSuccess) onSuccess(tournamentId, name.trim());
+      else navigation?.replace?.('TournamentDetail', { tournamentId, tournamentName: name.trim() });
     } catch (e) {
       setSaving(false);
       Alert.alert('Error', e.message || 'Could not create tournament');
     }
-  }, [name, drawSize, format, participantSlots, participantCount, canProceedToDraw, navigation, createOpts]);
+  }, [name, drawSize, format, participantSlots, participantCount, canProceedToDraw, navigation, createOpts, onSuccess]);
 
   const handleStartRoundRobin = useCallback(async () => {
     if (!name.trim()) {
@@ -218,7 +220,7 @@ export default function NewTournamentScreen({ navigation }) {
       return;
     }
     if (!canProceedToDraw) {
-      Alert.alert('Fill draw', `Add between 2 and ${drawSize} players.`);
+      Alert.alert('Fill draw', 'Add at least 2 players.');
       return;
     }
     setSaving(true);
@@ -236,12 +238,18 @@ export default function NewTournamentScreen({ navigation }) {
       }
       await setTournamentDraw(tournamentId, participantIds);
       setSaving(false);
-      navigation.replace('TournamentDetail', { tournamentId, tournamentName: name.trim() });
+      if (onSuccess) onSuccess(tournamentId, name.trim());
+      else navigation?.replace?.('TournamentDetail', { tournamentId, tournamentName: name.trim() });
     } catch (e) {
       setSaving(false);
       Alert.alert('Error', e.message || 'Could not create tournament');
     }
-  }, [name, drawSize, participantSlots, canProceedToDraw, navigation, createOpts]);
+  }, [name, drawSize, participantSlots, canProceedToDraw, navigation, createOpts, onSuccess]);
+
+  const handleClose = useCallback(() => {
+    if (onDismiss) onDismiss();
+    else if (navigation?.goBack) navigation.goBack();
+  }, [onDismiss, navigation]);
 
   return (
     <KeyboardAvoidingView
@@ -249,35 +257,50 @@ export default function NewTournamentScreen({ navigation }) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={80}
     >
+      {onDismiss != null && (
+        <View style={styles.sheetHeader}>
+          <Text style={styles.sheetTitle}>New tournament</Text>
+          <TouchableOpacity onPress={handleClose} style={styles.sheetClose} hitSlop={12}>
+            <Text style={styles.sheetCloseText}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {step === 1 && (
           <>
-            <Text style={styles.sectionTitle}>Tournament name</Text>
-            <View style={styles.nameRow}>
-              <TextInput
-                style={[styles.input, styles.nameInput]}
-                placeholder="e.g. Summer Cup 2025"
-                placeholderTextColor="#999"
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-              />
-              <View style={styles.formatToggle}>
-                <TouchableOpacity
-                  style={[styles.toggleSegment, format === FORMAT_KNOCKOUT && styles.toggleSegmentActive]}
-                  onPress={() => setFormat(FORMAT_KNOCKOUT)}
-                >
-                  <Text style={[styles.toggleText, format === FORMAT_KNOCKOUT && styles.toggleTextActive]}>Knockout</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.toggleSegment, format === FORMAT_ROUND_ROBIN && styles.toggleSegmentActive]}
-                  onPress={() => setFormat(FORMAT_ROUND_ROBIN)}
-                >
-                  <Text style={[styles.toggleText, format === FORMAT_ROUND_ROBIN && styles.toggleTextActive]}>Round Robin</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            {format === FORMAT_KNOCKOUT ? (
+            {!fromModal && (
+              <>
+                <Text style={styles.sectionTitle}>Tournament name</Text>
+                <View style={styles.nameRow}>
+                  <TextInput
+                    style={[styles.input, styles.nameInput]}
+                    placeholder="e.g. Summer Cup 2025"
+                    placeholderTextColor="#999"
+                    value={name}
+                    onChangeText={setName}
+                    autoCapitalize="words"
+                  />
+                  <View style={styles.formatToggle}>
+                    <TouchableOpacity
+                      style={[styles.toggleSegment, format === FORMAT_KNOCKOUT && styles.toggleSegmentActive]}
+                      onPress={() => setFormat(FORMAT_KNOCKOUT)}
+                    >
+                      <Text style={[styles.toggleText, format === FORMAT_KNOCKOUT && styles.toggleTextActive]}>Knockout</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.toggleSegment, format === FORMAT_ROUND_ROBIN && styles.toggleSegmentActive]}
+                      onPress={() => setFormat(FORMAT_ROUND_ROBIN)}
+                    >
+                      <Text style={[styles.toggleText, format === FORMAT_ROUND_ROBIN && styles.toggleTextActive]}>Round Robin</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
+            )}
+            {fromModal && (
+              <Text style={styles.sectionTitle}>{name || 'Tournament'}</Text>
+            )}
+            {format === FORMAT_KNOCKOUT && (
               <>
                 <Text style={styles.sectionTitle}>Draw size</Text>
                 <View style={styles.chipRow}>
@@ -292,21 +315,9 @@ export default function NewTournamentScreen({ navigation }) {
                   ))}
                 </View>
               </>
-            ) : (
-              <>
-                <Text style={styles.sectionTitle}>Number of players</Text>
-                <View style={styles.chipRow}>
-                  {ROUND_ROBIN_SIZES.map((size) => (
-                    <TouchableOpacity
-                      key={size}
-                      style={[styles.chip, drawSize === size && styles.chipSelected]}
-                      onPress={() => setDrawSize(size)}
-                    >
-                      <Text style={[styles.chipText, drawSize === size && styles.chipTextSelected]}>{size}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </>
+            )}
+            {format === FORMAT_ROUND_ROBIN && (
+              <Text style={styles.hint}>Add players on the next step. Everyone plays everyone once; league table is built from results.</Text>
             )}
             <Text style={styles.sectionTitle}>Date (optional)</Text>
             <TextInput
@@ -323,16 +334,6 @@ export default function NewTournamentScreen({ navigation }) {
               placeholderTextColor="#999"
               value={description}
               onChangeText={setDescription}
-              multiline
-              numberOfLines={2}
-            />
-            <Text style={styles.sectionTitle}>Remarks (optional)</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="Notes about this tournament"
-              placeholderTextColor="#999"
-              value={remarks}
-              onChangeText={setRemarks}
               multiline
               numberOfLines={2}
             />
@@ -365,12 +366,12 @@ export default function NewTournamentScreen({ navigation }) {
         {step === 2 && (
           <>
             <Text style={styles.sectionTitle}>
-              Players ({participantSlots.length} / {format === FORMAT_KNOCKOUT ? drawSize : `${drawSize} max`})
+              {format === FORMAT_KNOCKOUT ? `Players (${participantSlots.length} / ${drawSize})` : `Players (${participantSlots.length})`}
             </Text>
             <Text style={styles.hint}>
               {format === FORMAT_KNOCKOUT
                 ? 'Add from your players or type a name for others.'
-                : 'Add between 2 and ' + drawSize + ' players. Everyone plays everyone.'}
+                : 'Add as many players as you want (min 2). Everyone plays everyone once; league table updates from match results.'}
             </Text>
             <View style={styles.chipRow}>
               {players.map((p) => (
@@ -498,6 +499,10 @@ export default function NewTournamentScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f4f0' },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.08)', backgroundColor: '#fff' },
+  sheetTitle: { fontSize: 18, fontWeight: '700', color: '#1a1a1a' },
+  sheetClose: { padding: 8 },
+  sheetCloseText: { fontSize: 22, color: '#666' },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 40 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: '#1a472a', marginTop: 16, marginBottom: 8 },

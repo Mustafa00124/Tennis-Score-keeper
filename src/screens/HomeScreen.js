@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,9 @@ import {
   TextInput,
   ImageBackground,
   Animated,
+  Image,
+  Dimensions,
+  PanResponder,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
@@ -23,9 +26,15 @@ import {
   createPlayer,
   getPlayerStats,
   getAllTournaments,
+  getHeadToHead,
 } from '../db/database';
+import NewTournamentScreen from './NewTournamentScreen';
 
 const HEADER_HEIGHT = 56;
+const SCREEN_W = Dimensions.get('window').width;
+const CARD_H = 142;
+const STACK_OFFSET = 14;
+const SWIPE_THRESH = 60;
 
 /** From all matches (one per day), build unique matchup pairs (one per player pair). */
 function uniqueMatchupsFromMatches(matchList) {
@@ -67,7 +76,16 @@ export default function HomeScreen({ navigation }) {
   const [playerStats, setPlayerStats] = useState({});
   const [addMatchupVisible, setAddMatchupVisible] = useState(false);
   const [addPlayerVisible, setAddPlayerVisible] = useState(false);
+  const [newTournamentVisible, setNewTournamentVisible] = useState(false);
   const [activeTab, setActiveTab] = useState('matches');
+  const [matchLayout, setMatchLayout] = useState('stack'); // 'stack' | 'list'
+  const stackContainerAnim = useRef(new Animated.Value(1)).current;
+  const listCardAnims = useMemo(() => matches.map(() => new Animated.Value(0)), [matches.length]);
+
+  useEffect(() => {
+    if (matchLayout === 'list') listCardAnims.forEach((a) => a.setValue(1));
+  }, [listCardAnims, matchLayout]);
+
   const [player1Id, setPlayer1Id] = useState(null);
   const [player2Id, setPlayer2Id] = useState(null);
   const [newPlayerName, setNewPlayerName] = useState('');
@@ -81,7 +99,13 @@ export default function HomeScreen({ navigation }) {
     setPlayers(playerList);
     setTournaments(tournamentList);
     const matchups = uniqueMatchupsFromMatches(matchList);
-    setMatches(matchups);
+    const matchupsWithH2h = await Promise.all(
+      matchups.map(async (mu) => {
+        const h2h = await getHeadToHead(mu.player1_id, mu.player2_id);
+        return { ...mu, h2h };
+      })
+    );
+    setMatches(matchupsWithH2h);
     const stats = await Promise.all(
       playerList.map((p) => getPlayerStats(p.id).then((s) => ({ id: p.id, ...s })))
     );
@@ -123,6 +147,30 @@ export default function HomeScreen({ navigation }) {
     setNewPlayerName('');
     setAddPlayerVisible(true);
   }, []);
+
+  const toggleMatchLayout = useCallback(() => {
+    const toList = matchLayout === 'stack';
+    setMatchLayout(toList ? 'list' : 'stack');
+
+    if (toList) {
+      Animated.spring(stackContainerAnim, {
+        toValue: 0, tension: 90, friction: 10, useNativeDriver: true,
+      }).start(() => {
+        Animated.stagger(50, listCardAnims.map((a) =>
+          Animated.spring(a, { toValue: 1, tension: 62, friction: 11, useNativeDriver: true })
+        )).start();
+      });
+    } else {
+      Animated.stagger(28, [...listCardAnims].reverse().map((a) =>
+        Animated.timing(a, { toValue: 0, duration: 105, useNativeDriver: true })
+      )).start(() => {
+        listCardAnims.forEach((a) => a.setValue(0));
+        Animated.spring(stackContainerAnim, {
+          toValue: 1, tension: 70, friction: 11, useNativeDriver: true,
+        }).start();
+      });
+    }
+  }, [matchLayout, stackContainerAnim, listCardAnims]);
 
   const handleAddPlayer = useCallback(async () => {
     const name = newPlayerName.trim();
@@ -188,6 +236,11 @@ export default function HomeScreen({ navigation }) {
           <Text style={styles.sectionTitle}>
             {activeTab === 'matches' ? 'Match ups' : activeTab === 'players' ? 'Players' : 'Tournaments'}
           </Text>
+          {activeTab === 'matches' && matches.length > 0 && (
+            <TouchableOpacity onPress={toggleMatchLayout} style={styles.layoutToggleBtn} hitSlop={8}>
+              <Text style={styles.layoutToggleIcon}>{matchLayout === 'stack' ? '☰' : '⊟'}</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.plusBtn}
             onPress={
@@ -195,69 +248,121 @@ export default function HomeScreen({ navigation }) {
                 ? openAddMatchup
                 : activeTab === 'players'
                   ? openAddPlayer
-                  : () => navigation.navigate('NewTournament')
+                  : () => setNewTournamentVisible(true)
             }
           >
             <Text style={styles.plusText}>+</Text>
           </TouchableOpacity>
         </View>
-        <ScrollView
-          style={styles.cardScroll}
-          contentContainerStyle={styles.cardScrollContent}
-          showsVerticalScrollIndicator={false}
-        >
           {activeTab === 'matches' ? (
             matches.length === 0 ? (
               <Text style={styles.emptyHint}>No match ups. Tap + to add.</Text>
             ) : (
-              matches.map((mu) => (
-                <MatchUpCard
-                  key={`${mu.player1_id}-${mu.player2_id}`}
-                  matchup={mu}
-                  onPress={() =>
-                    navigation.navigate('MatchupStats', {
-                      player1Id: mu.player1_id,
-                      player2Id: mu.player2_id,
-                      player1Name: mu.player1_name,
-                      player2Name: mu.player2_name,
-                    })
-                  }
-                  onAddDay={async () => {
-                    try {
-                      const newMatchId = await createMatchup(mu.player1_id, mu.player2_id);
-                      navigation.navigate('MatchDetail', { matchId: newMatchId });
-                    } catch (e) {
-                      Alert.alert('Error', e.message || 'Could not add day');
+              <View style={{ flex: 1, position: 'relative' }}>
+                <Animated.View
+                  pointerEvents={matchLayout === 'stack' ? 'auto' : 'none'}
+                  style={[
+                    StyleSheet.absoluteFill,
+                    {
+                      opacity: stackContainerAnim,
+                      transform: [{ scale: stackContainerAnim.interpolate({ inputRange: [0, 1], outputRange: [0.84, 1], extrapolate: 'clamp' }) }],
+                      zIndex: matchLayout === 'stack' ? 2 : 1,
+                    },
+                  ]}
+                >
+                  <MatchUpCardStack
+                    items={matches}
+                    players={players}
+                    onPressItem={(mu) =>
+                      navigation.navigate('MatchupStats', {
+                        player1Id: mu.player1_id,
+                        player2Id: mu.player2_id,
+                        player1Name: mu.player1_name,
+                        player2Name: mu.player2_name,
+                      })
                     }
-                  }}
-                />
-              ))
+                    onAddDay={async (mu) => {
+                      try {
+                        const newMatchId = await createMatchup(mu.player1_id, mu.player2_id);
+                        navigation.navigate('MatchDetail', { matchId: newMatchId });
+                      } catch (e) {
+                        Alert.alert('Error', e.message || 'Could not add day');
+                      }
+                    }}
+                  />
+                </Animated.View>
+                <Animated.View
+                  pointerEvents={matchLayout === 'list' ? 'auto' : 'none'}
+                  style={[StyleSheet.absoluteFill, { zIndex: matchLayout === 'list' ? 2 : 1 }]}
+                >
+                  <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
+                    {matches.map((mu, k) => (
+                      <Animated.View
+                        key={`${mu.player1_id}-${mu.player2_id}`}
+                        style={{
+                          opacity: listCardAnims[k],
+                          marginBottom: 10,
+                          transform: [{ translateY: listCardAnims[k].interpolate({ inputRange: [0, 1], outputRange: [36, 0] }) }],
+                        }}
+                      >
+                        <MatchUpCard
+                          matchup={mu}
+                          players={players}
+                          onPress={() =>
+                            navigation.navigate('MatchupStats', {
+                              player1Id: mu.player1_id,
+                              player2Id: mu.player2_id,
+                              player1Name: mu.player1_name,
+                              player2Name: mu.player2_name,
+                            })
+                          }
+                          onAddDay={async () => {
+                            try {
+                              const newMatchId = await createMatchup(mu.player1_id, mu.player2_id);
+                              navigation.navigate('MatchDetail', { matchId: newMatchId });
+                            } catch (e) {
+                              Alert.alert('Error', e.message || 'Could not add day');
+                            }
+                          }}
+                        />
+                      </Animated.View>
+                    ))}
+                  </ScrollView>
+                </Animated.View>
+              </View>
             )
-          ) : activeTab === 'players' ? (
-            players.length === 0 ? (
-              <Text style={styles.emptyHint}>No players. Tap + to add.</Text>
-            ) : (
-              players.map((p) => (
-                <PlayerCard
-                  key={p.id}
-                  player={p}
-                  stats={playerStats[p.id]}
-                  onPress={() => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name })}
-                />
-              ))
-            )
-          ) : tournaments.length === 0 ? (
-            <Text style={styles.emptyHint}>No tournaments. Tap + to create.</Text>
           ) : (
-            tournaments.map((t) => (
-              <TournamentCard
-                key={t.id}
-                tournament={t}
-                onPress={() => navigation.navigate('TournamentDetail', { tournamentId: t.id, tournamentName: t.name })}
-              />
-            ))
+            <ScrollView
+              style={styles.cardScroll}
+              contentContainerStyle={styles.cardScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {activeTab === 'players' ? (
+                players.length === 0 ? (
+                  <Text style={styles.emptyHint}>No players. Tap + to add.</Text>
+                ) : (
+                  players.map((p) => (
+                    <PlayerCard
+                      key={p.id}
+                      player={p}
+                      stats={playerStats[p.id]}
+                      onPress={() => navigation.navigate('PlayerDetail', { playerId: p.id, playerName: p.name })}
+                    />
+                  ))
+                )
+              ) : tournaments.length === 0 ? (
+                <Text style={styles.emptyHint}>No tournaments. Tap + to create.</Text>
+              ) : (
+                tournaments.map((t) => (
+                  <TournamentCard
+                    key={t.id}
+                    tournament={t}
+                    onPress={() => navigation.navigate('TournamentDetail', { tournamentId: t.id, tournamentName: t.name })}
+                  />
+                ))
+              )}
+            </ScrollView>
           )}
-        </ScrollView>
       </View>
         </View>
       </ImageBackground>
@@ -350,6 +455,26 @@ export default function HomeScreen({ navigation }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* New tournament modal (full wizard) */}
+      <Modal visible={newTournamentVisible} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.tournamentSheetCard}>
+            <NewTournamentScreen
+              navigation={navigation}
+              onDismiss={() => setNewTournamentVisible(false)}
+              onSuccess={(tournamentId, tournamentName) => {
+                setNewTournamentVisible(false);
+                load();
+                navigation.navigate('TournamentDetail', { tournamentId, tournamentName });
+              }}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -394,35 +519,250 @@ function CardColorPulse() {
   );
 }
 
-function MatchUpCard({ matchup, onPress, onAddDay }) {
-  const dateLabel = matchup.lastPlayedDate ? matchup.lastPlayedDate.slice(0, 10) : 'No days yet';
-  const daysLabel = matchup.matchCount > 0 ? `${matchup.matchCount} day${matchup.matchCount !== 1 ? 's' : ''}` : null;
+function MatchUpCardStack({ items, players, onPressItem, onAddDay }) {
+  const n = items.length;
+  const nRef = useRef(n);
+  nRef.current = n;
+
+  const [activeIdx, setActiveIdx] = useState(0);
+  const safeIdx = n > 0 ? activeIdx % n : 0;
+
+  const swipingRef = useRef(false);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const visibleCount = Math.min(3, n);
+
+  const doSwipeRef = useRef(null);
+  doSwipeRef.current = (dir) => {
+    if (swipingRef.current || nRef.current < 2) return;
+    swipingRef.current = true;
+    Animated.timing(swipeX, {
+      toValue: dir > 0 ? -(SCREEN_W * 1.3) : SCREEN_W * 1.3,
+      duration: 280,
+      useNativeDriver: true,
+    }).start(() => {
+      swipeX.setValue(0);
+      setActiveIdx((i) => (i + dir + nRef.current) % nRef.current);
+      swipingRef.current = false;
+    });
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) =>
+        !swipingRef.current &&
+        Math.abs(g.dx) > 10 &&
+        Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+      onPanResponderMove: (_, g) => {
+        if (!swipingRef.current) swipeX.setValue(g.dx);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (swipingRef.current) return;
+        const currentN = nRef.current;
+        if (currentN < 2) { swipeX.setValue(0); return; }
+        const dir = g.dx < -SWIPE_THRESH ? 1 : g.dx > SWIPE_THRESH ? -1 : 0;
+        if (dir === 0) {
+          Animated.spring(swipeX, { toValue: 0, friction: 7, useNativeDriver: true }).start();
+          return;
+        }
+        doSwipeRef.current?.(dir);
+      },
+    })
+  ).current;
+
+  const activeRotate = swipeX.interpolate({
+    inputRange: [-SCREEN_W, 0, SCREEN_W],
+    outputRange: ['-5deg', '0deg', '5deg'],
+    extrapolate: 'clamp',
+  });
+  const nextScale = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [1, 0.95, 1],
+    extrapolate: 'clamp',
+  });
+  const nextTransY = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [0, STACK_OFFSET, 0],
+    extrapolate: 'clamp',
+  });
+  const thirdScale = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [0.95, 0.90, 0.95],
+    extrapolate: 'clamp',
+  });
+  const thirdTransY = swipeX.interpolate({
+    inputRange: [-SCREEN_W * 0.6, 0, SCREEN_W * 0.6],
+    outputRange: [STACK_OFFSET, STACK_OFFSET * 2, STACK_OFFSET],
+    extrapolate: 'clamp',
+  });
+
+  if (n === 0) return null;
+
+  const containerH = CARD_H + STACK_OFFSET * (visibleCount - 1);
+
   return (
-    <TouchableOpacity style={styles.matchCard} onPress={onPress} activeOpacity={0.7}>
+    <View style={styles.stackOuter}>
+      <View style={{ height: containerH, position: 'relative' }}>
+        {Array.from({ length: visibleCount }, (_, stackPos) => {
+          const depth = visibleCount - 1 - stackPos;
+          const cardIdx = (safeIdx + depth) % n;
+          const item = items[cardIdx];
+
+          let posStyle, animStyle;
+          if (depth === 0) {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = {
+              transform: [{ translateX: swipeX }, { rotate: activeRotate }],
+              zIndex: 10,
+            };
+          } else if (depth === 1) {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = {
+              transform: [{ scale: nextScale }, { translateY: nextTransY }],
+              opacity: 0.88,
+              zIndex: 9,
+            };
+          } else {
+            posStyle = { position: 'absolute', left: 0, right: 0, top: 0 };
+            animStyle = {
+              transform: [{ scale: thirdScale }, { translateY: thirdTransY }],
+              opacity: 0.7,
+              zIndex: 8,
+            };
+          }
+
+          return (
+            <Animated.View
+              key={`sd${depth}`}
+              style={[posStyle, animStyle]}
+              {...(depth === 0 ? panResponder.panHandlers : {})}
+            >
+              <MatchUpCard
+                matchup={item}
+                players={players}
+                onPress={depth === 0 ? () => onPressItem(item) : undefined}
+                onAddDay={depth === 0 ? () => onAddDay(item) : undefined}
+                cardStyle={{ height: CARD_H }}
+              />
+            </Animated.View>
+          );
+        })}
+      </View>
+
+      {n > 1 && (
+        <View style={styles.stackNavRow}>
+          <TouchableOpacity
+            onPress={() => doSwipeRef.current?.(-1)}
+            style={styles.navBtn}
+            hitSlop={10}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.navBtnText}>‹</Text>
+          </TouchableOpacity>
+
+          <View style={styles.dotRow}>
+            {n <= 10 ? (
+              items.map((_, i) => (
+                <View key={i} style={[styles.dot, i === safeIdx && styles.dotActive]} />
+              ))
+            ) : (
+              <Text style={styles.dotCount}>{safeIdx + 1} / {n}</Text>
+            )}
+          </View>
+
+          <TouchableOpacity
+            onPress={() => doSwipeRef.current?.(1)}
+            style={styles.navBtn}
+            hitSlop={10}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.navBtnText}>›</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function MatchUpCard({ matchup, players, onPress, onAddDay, cardStyle }) {
+  const dateLabel = matchup.lastPlayedDate ? matchup.lastPlayedDate.slice(0, 10) : 'No days yet';
+  const h2h = matchup.h2h;
+  const player1Wins = h2h ? h2h.wins : 0;
+  const player2Wins = h2h ? h2h.losses : 0;
+  const h2hLabel = (player1Wins + player2Wins) > 0 ? `${player1Wins}-${player2Wins}` : '—';
+  const playersById = (players || []).reduce((acc, p) => ({ ...acc, [p.id]: p }), {});
+  const p1 = playersById[matchup.player1_id];
+  const p2 = playersById[matchup.player2_id];
+  const uri1 = p1?.profile_image || null;
+  const uri2 = p2?.profile_image || null;
+  const name1 = matchup.player1_name || '';
+  const name2 = matchup.player2_name || '';
+
+  return (
+    <TouchableOpacity style={[styles.matchCard, cardStyle]} onPress={onPress} activeOpacity={0.7}>
       <CardColorPulse />
       <View style={styles.matchCardInner}>
-          <View style={styles.matchCardHeader}>
-            <Text style={styles.matchCardVs} numberOfLines={2}>
-              {matchup.player1_name} vs {matchup.player2_name}
-            </Text>
-            <TouchableOpacity
-              style={styles.addBtn}
-              onPress={(e) => {
-                e.stopPropagation();
-                onAddDay?.();
-              }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={styles.addBtnText}>Add</Text>
-            </TouchableOpacity>
+        <View style={styles.matchCardContentRow}>
+          <View style={styles.matchCardTextBlock}>
+            <View style={styles.matchCardHeader}>
+              <Text style={styles.matchCardVs} numberOfLines={2}>
+                {matchup.player1_name} vs {matchup.player2_name}
+              </Text>
+              <TouchableOpacity
+                style={styles.addBtn}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  onAddDay?.();
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.addBtnText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.matchCardDate}>Last played: {dateLabel}</Text>
+            <Text style={styles.matchCardH2h}>H2H: {h2hLabel}</Text>
+            <Text style={styles.matchCardTap}>Tap for stats · Add for new day</Text>
           </View>
-          <Text style={styles.matchCardDate}>Last played: {dateLabel}</Text>
-          {daysLabel ? (
-            <Text style={styles.matchCardRemarks} numberOfLines={1}>{daysLabel}</Text>
-          ) : null}
-          <Text style={styles.matchCardTap}>Tap for stats · Add for new day</Text>
+          <View style={styles.matchCardCollageWrap}>
+            <MatchupAvatarCollage uri1={uri1} uri2={uri2} name1={name1} name2={name2} />
+          </View>
         </View>
+      </View>
     </TouchableOpacity>
+  );
+}
+
+function MatchupAvatarCollage({ uri1, uri2, name1, name2 }) {
+  const size = 28;
+  const overlap = 10;
+  const initials = (name) =>
+    (name || '?')
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || '')
+      .join('') || '?';
+  return (
+    <View style={[styles.collageContainer, { width: size * 2 - overlap, height: size }]}>
+      <View style={[styles.collageAvatar, { width: size, height: size, borderRadius: size / 2, left: 0, zIndex: 2 }]}>
+        {uri1 ? (
+          <Image source={{ uri: uri1 }} style={styles.collageImage} />
+        ) : (
+          <View style={styles.collageFallback}>
+            <Text style={styles.collageInitial} numberOfLines={1}>{initials(name1)}</Text>
+          </View>
+        )}
+      </View>
+      <View style={[styles.collageAvatar, { width: size, height: size, borderRadius: size / 2, left: size - overlap, zIndex: 1 }]}>
+        {uri2 ? (
+          <Image source={{ uri: uri2 }} style={styles.collageImage} />
+        ) : (
+          <View style={styles.collageFallback}>
+            <Text style={styles.collageInitial} numberOfLines={1}>{initials(name2)}</Text>
+          </View>
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -532,6 +872,54 @@ const styles = StyleSheet.create({
   cardScroll: { flex: 1 },
   cardScrollContent: { paddingBottom: 24 },
   emptyHint: { color: 'rgba(255,255,255,0.9)', fontSize: 14, paddingVertical: 12, paddingHorizontal: 4, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  layoutToggleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+    marginRight: 6,
+  },
+  layoutToggleIcon: { fontSize: 17, color: '#fff' },
+  stackNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 10,
+    paddingBottom: 4,
+    gap: 10,
+  },
+  navBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  navBtnText: { fontSize: 22, color: '#fff', lineHeight: 26, fontWeight: '300' },
+  stackOuter: { flex: 1, paddingBottom: 8 },
+  dotRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 14,
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  dotActive: { backgroundColor: '#fff', width: 22, borderRadius: 4 },
+  dotCount: { fontSize: 13, color: 'rgba(255,255,255,0.8)', fontWeight: '600' },
   matchCard: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
@@ -546,13 +934,32 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   matchCardInner: { padding: 14 },
+  matchCardContentRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  matchCardTextBlock: { flex: 1, minWidth: 0 },
   matchCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 },
   matchCardVs: { fontSize: 14, fontWeight: '700', color: '#1a1a1a', flex: 1 },
   addBtn: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#1a472a' },
   addBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   matchCardDate: { fontSize: 12, color: '#666', marginTop: 4 },
-  matchCardRemarks: { fontSize: 11, color: '#888', marginTop: 2, fontStyle: 'italic' },
+  matchCardH2h: { fontSize: 12, color: '#1a472a', marginTop: 2, fontWeight: '600' },
   matchCardTap: { fontSize: 11, color: '#1a472a', marginTop: 4, opacity: 0.9 },
+  matchCardCollageWrap: { justifyContent: 'center', alignItems: 'center' },
+  collageContainer: { position: 'relative' },
+  collageAvatar: {
+    position: 'absolute',
+    top: 0,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.95)',
+    overflow: 'hidden',
+  },
+  collageImage: { width: '100%', height: '100%' },
+  collageFallback: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#e2ebdf',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  collageInitial: { fontSize: 10, fontWeight: '700', color: '#1a472a' },
   playerCard: {
     backgroundColor: 'rgba(255,255,255,0.72)',
     borderRadius: 14,
@@ -594,6 +1001,14 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingBottom: 40,
   },
+  tournamentSheetCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    minHeight: 320,
+    overflow: 'hidden',
+  },
   modalTitle: { fontSize: 20, fontWeight: '700', color: '#1a1a1a', marginBottom: 20 },
   modalHint: { color: '#666', marginBottom: 16 },
   modalLabel: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 8, marginTop: 12 },
@@ -632,4 +1047,17 @@ const styles = StyleSheet.create({
   modalBtnSecondaryText: { color: '#333', fontWeight: '600' },
   modalClose: { position: 'absolute', top: 16, right: 16, padding: 8 },
   modalCloseText: { fontSize: 20, color: '#666' },
+  tournamentFormatRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  formatChip: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  formatChipSelected: { borderColor: '#1a472a', backgroundColor: '#e8f0e8' },
+  formatChipText: { fontSize: 14, fontWeight: '600', color: '#555' },
+  formatChipTextSelected: { color: '#1a472a' },
 });

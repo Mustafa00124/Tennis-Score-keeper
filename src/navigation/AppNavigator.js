@@ -4,10 +4,10 @@ import { TouchableOpacity, Text, StyleSheet, View, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import HomeScreen from '../screens/HomeScreen';
+import MatchViewScreen from '../screens/MatchViewScreen';
 import MatchDetailScreen from '../screens/MatchDetailScreen';
 import MatchupStatsScreen from '../screens/MatchupStatsScreen';
 import PlayerDetailScreen from '../screens/PlayerDetailScreen';
-import NewTournamentScreen from '../screens/NewTournamentScreen';
 import TournamentDetailScreen from '../screens/TournamentDetailScreen';
 
 const Stack = createNativeStackNavigator();
@@ -67,6 +67,11 @@ export default function AppNavigator() {
         })}
       />
       <Stack.Screen
+        name="MatchView"
+        component={MatchViewScreen}
+        options={{ title: 'Match' }}
+      />
+      <Stack.Screen
         name="MatchDetail"
         component={MatchDetailScreen}
         options={{ title: 'Edit match' }}
@@ -75,11 +80,6 @@ export default function AppNavigator() {
         name="PlayerDetail"
         component={PlayerDetailScreen}
         options={({ route }) => ({ title: route.params?.playerName ?? 'Player' })}
-      />
-      <Stack.Screen
-        name="NewTournament"
-        component={NewTournamentScreen}
-        options={{ title: 'New tournament' }}
       />
       <Stack.Screen
         name="TournamentDetail"

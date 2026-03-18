@@ -239,6 +239,28 @@ export async function getSetScoresForMatch(matchId) {
   }));
 }
 
+/** Find a match for the same two players (in either order) on the same date (YYYY-MM-DD). Returns first match or null. */
+export async function getMatchByPlayersAndDate(player1Id, player2Id, dateStr) {
+  if (!dateStr || dateStr.length < 10) return null;
+  const prefix = dateStr.slice(0, 10);
+  const matches = loadMatches();
+  const m = matches.find(
+    (x) =>
+      ((x.player1_id === player1Id && x.player2_id === player2Id) ||
+        (x.player1_id === player2Id && x.player2_id === player1Id)) &&
+      (x.date_played || '').slice(0, 10) === prefix
+  );
+  return m ?? null;
+}
+
+/** Delete a match and its set_scores. */
+export async function deleteMatch(matchId) {
+  const matches = loadMatches().filter((m) => m.id !== matchId);
+  saveMatches(matches);
+  const scores = loadSetScores().filter((s) => s.match_id !== matchId);
+  saveSetScores(scores);
+}
+
 export async function getAllMatches() {
   const players = loadPlayers();
   const matches = loadMatches();
@@ -610,7 +632,7 @@ function isValidDrawSize(n) {
 }
 
 function isValidRoundRobinSize(n) {
-  return n >= 2 && n <= 20;
+  return n >= 2 && n <= 50;
 }
 
 export async function getAllTournaments() {
@@ -629,7 +651,7 @@ export async function createTournament(name, drawSize, opts = {}) {
   const format = opts.format === 'round_robin' ? 'round_robin' : 'knockout';
   const size = parseInt(drawSize, 10) || (format === 'round_robin' ? 4 : 8);
   if (format === 'knockout' && !isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
-  if (format === 'round_robin' && !isValidRoundRobinSize(size)) throw new Error('Number of players must be 2–20 for round robin');
+  if (format === 'round_robin' && !isValidRoundRobinSize(size)) throw new Error('Number of players must be 2–50 for round robin');
   const list = loadTournaments();
   const id = list.length ? Math.max(...list.map((t) => t.id)) + 1 : 1;
   const date = (opts.date || '').trim() || null;
@@ -696,18 +718,24 @@ export async function getTournamentParticipants(tournamentId) {
   return list;
 }
 
-/** Circle method: player 0 fixed, others rotate. Returns [{ round, i, j }] with i < j. */
+/** Circle method: player 0 fixed, others rotate. Returns [{ round, i, j }] with i < j. For odd n, uses bye (index n) then filters so every real pair plays once. */
 function roundRobinPairings(n) {
+  if (n < 2) return [];
+  const useBye = n % 2 === 1;
+  const N = useBye ? n + 1 : n;
   const pairs = [];
-  const rounds = n - 1;
-  const half = Math.floor(n / 2);
+  const rounds = N - 1;
+  const half = Math.floor(N / 2);
   for (let r = 0; r < rounds; r++) {
     pairs.push({ round: r, i: 0, j: r + 1 });
     for (let k = 1; k < half; k++) {
-      const a = (r + k) % (n - 1) + 1;
-      const b = (r + n - 1 - k) % (n - 1) + 1;
+      const a = (r + k) % (N - 1) + 1;
+      const b = (r + N - 1 - k) % (N - 1) + 1;
       pairs.push({ round: r, i: Math.min(a, b), j: Math.max(a, b) });
     }
+  }
+  if (useBye) {
+    return pairs.filter((p) => p.i !== n && p.j !== n);
   }
   return pairs;
 }
@@ -844,16 +872,24 @@ export async function getTournamentWithBracket(tournamentId) {
   return { tournament, participants, matches: matchesWithNames };
 }
 
-export async function setTournamentMatchWinner(tournamentMatchId, winnerParticipantId) {
+export async function setTournamentMatchWinner(tournamentMatchId, winnerParticipantId, details = {}) {
   const all = loadTournamentMatches();
   const row = all.find((m) => m.id === tournamentMatchId);
   if (!row) return;
   row.winner_participant_id = winnerParticipantId;
+  if (details.score != null && details.score !== '') row.score = String(details.score).trim();
+  if (details.match_date != null && details.match_date !== '') row.match_date = String(details.match_date).trim();
+  if (details.remarks != null && details.remarks !== '') row.remarks = String(details.remarks).trim();
   saveTournamentMatches(all);
   const tournament = loadTournaments().find((t) => t.id === row.tournament_id);
   if (tournament?.format === 'round_robin') return;
-  const nextRound = row.round - 1;
-  if (nextRound < 0) {
+  const nextRound = row.round + 1;
+  const nextMatchIndex = Math.floor(row.match_index_in_round / 2);
+  const slot = row.match_index_in_round % 2;
+  const nextMatch = all.find(
+    (m) => m.tournament_id === row.tournament_id && m.round === nextRound && m.match_index_in_round === nextMatchIndex
+  );
+  if (!nextMatch) {
     const tournaments = loadTournaments();
     const t = tournaments.find((x) => x.id === row.tournament_id);
     if (t) {
@@ -862,16 +898,9 @@ export async function setTournamentMatchWinner(tournamentMatchId, winnerParticip
     }
     return;
   }
-  const nextMatchIndex = Math.floor(row.match_index_in_round / 2);
-  const slot = row.match_index_in_round % 2;
-  const nextMatch = all.find(
-    (m) => m.tournament_id === row.tournament_id && m.round === nextRound && m.match_index_in_round === nextMatchIndex
-  );
-  if (nextMatch) {
-    if (slot === 0) nextMatch.player1_participant_id = winnerParticipantId;
-    else nextMatch.player2_participant_id = winnerParticipantId;
-    saveTournamentMatches(all);
-  }
+  if (slot === 0) nextMatch.player1_participant_id = winnerParticipantId;
+  else nextMatch.player2_participant_id = winnerParticipantId;
+  saveTournamentMatches(all);
 }
 
 export async function linkTournamentMatchToAppMatch(tournamentMatchId, matchId) {
@@ -879,6 +908,15 @@ export async function linkTournamentMatchToAppMatch(tournamentMatchId, matchId) 
   const m = all.find((x) => x.id === tournamentMatchId);
   if (m) {
     m.linked_match_id = matchId;
+    saveTournamentMatches(all);
+  }
+}
+
+export async function setTournamentMatchRemark(tournamentMatchId, remark) {
+  const all = loadTournamentMatches();
+  const m = all.find((x) => x.id === tournamentMatchId);
+  if (m) {
+    m.remark = (remark != null && String(remark).trim() !== '') ? String(remark).trim() : null;
     saveTournamentMatches(all);
   }
 }
