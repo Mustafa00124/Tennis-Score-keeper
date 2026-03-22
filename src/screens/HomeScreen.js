@@ -1168,9 +1168,9 @@ function TournamentCardStack({ items, onPressItem, onDelete }) {
 function MatchUpCard({ matchup, players, onPress, onAddDay, onDelete, cardStyle, variant }) {
   const dateLabel = matchup.lastPlayedDate ? matchup.lastPlayedDate.slice(0, 10) : 'No days yet';
   const h2h = matchup.h2h;
-  const player1Wins = h2h ? h2h.wins : 0;
-  const player2Wins = h2h ? h2h.losses : 0;
-  const h2hLabel = (player1Wins + player2Wins) > 0 ? `${player1Wins}-${player2Wins}` : '—';
+  const s1 = h2h?.setsWon ?? 0;
+  const s2 = h2h?.setsLost ?? 0;
+  const h2hLabel = s1 + s2 > 0 ? `${s1}–${s2} sets` : '—';
   const playersById = (players || []).reduce((acc, p) => ({ ...acc, [p.id]: p }), {});
   const p1 = playersById[matchup.player1_id];
   const p2 = playersById[matchup.player2_id];
@@ -1212,7 +1212,7 @@ function MatchUpCard({ matchup, players, onPress, onAddDay, onDelete, cardStyle,
             </View>
           </View>
           <Text style={styles.matchCardStackDate}>Last played: {dateLabel}</Text>
-          <Text style={styles.matchCardStackH2h}>H2H: {h2hLabel}</Text>
+          <Text style={styles.matchCardStackH2h}>Sets: {h2hLabel}</Text>
           <Text style={styles.matchCardStackTap}>Tap for stats · Add for new day</Text>
           <View style={styles.matchCardStackCollageWrap}>
             <MatchupAvatarCollage uri1={uri1} uri2={uri2} name1={name1} name2={name2} variant="splitSquare" size={88} />
@@ -1251,7 +1251,7 @@ function MatchUpCard({ matchup, players, onPress, onAddDay, onDelete, cardStyle,
               </View>
             </View>
             <Text style={styles.matchCardDate}>Last played: {dateLabel}</Text>
-            <Text style={styles.matchCardH2h}>H2H: {h2hLabel}</Text>
+            <Text style={styles.matchCardH2h}>Sets: {h2hLabel}</Text>
             <Text style={styles.matchCardTap}>Tap for stats · Add for new day</Text>
           </View>
           <View style={styles.matchCardCollageWrap}>
@@ -1351,7 +1351,7 @@ function PlayerAvatar({ uri, name, size }) {
 
 function PlayerCard({ player, stats, onPress, onEdit, onDelete, variant = 'list', cardStyle }) {
   const statLine = stats
-    ? `${stats.matchesPlayed ?? 0} M · ${stats.wins ?? 0}W ${stats.losses ?? 0}L${(stats.matchesPlayed ?? 0) > 0 ? ` · ${(stats.winPercentage ?? 0).toFixed(0)}%` : ''}`
+    ? `${stats.matchesPlayed ?? 0} days · ${stats.daysWon ?? stats.wins ?? 0}W-${stats.daysLost ?? stats.losses ?? 0}L-${stats.daysTied ?? 0}T · ${(stats.setWinPercentage ?? stats.winPercentage ?? 0).toFixed(0)}% sets`
     : null;
   const isStack = variant === 'stack';
 

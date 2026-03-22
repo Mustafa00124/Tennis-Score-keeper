@@ -20,7 +20,7 @@ import {
   setTournamentMatchRemark,
   linkTournamentMatchToAppMatch,
   createMatchup,
-  getTournamentH2H,
+  getHeadToHead,
 } from '../db/database';
 import { gamesInValidRange, setNeedsTiebreak, isSetValidForSave, isSetComplete } from '../utils/tennisScoring';
 
@@ -143,9 +143,9 @@ function KnockoutBracket({ matchesByRound, roundIndices, totalRounds, openMatchA
               {[match.score, match.match_date].filter(Boolean).join(' · ')}
             </Text>
           )}
-          {bothApp && h2h && h2h.wins != null && (
+          {bothApp && h2h && (h2h.setsWon ?? 0) + (h2h.setsLost ?? 0) > 0 && (
             <Text style={{ fontSize: 9, color: '#5a7a5a', marginTop: 1 }} numberOfLines={1}>
-              H2H {h2h.wins}–{h2h.losses}
+              Sets {h2h.setsWon}–{h2h.setsLost}
             </Text>
           )}
           {!hasWinner && (match.player1_name !== 'TBD' || match.player2_name !== 'TBD') && (
@@ -232,7 +232,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
           const b = m.player2_app_id;
           if (a && b) {
             try {
-              const h2h = await getTournamentH2H(tournamentId, a, b);
+              const h2h = await getHeadToHead(a, b);
               byMatch[m.id] = h2h;
             } catch (e) {
               if (__DEV__) console.warn('TournamentDetail: H2H load failed for match', m.id, e?.message);
@@ -378,14 +378,6 @@ function TournamentDetailScreenInner({ route, navigation }) {
       const tb2 = s.tiebreakPlayer2 != null && s.tiebreakPlayer2 !== '' ? String(s.tiebreakPlayer2) : undefined;
       return isSetComplete(s.gamesPlayer1, s.gamesPlayer2, tb1, tb2);
     });
-    if (completedSets.length > 0) {
-      const p1Sets = completedSets.filter((s) => s.gamesPlayer1 > s.gamesPlayer2).length;
-      const p2Sets = completedSets.filter((s) => s.gamesPlayer2 > s.gamesPlayer1).length;
-      if (p1Sets === p2Sets) {
-        Alert.alert('No winner', 'One player must win more completed sets than the other.');
-        return;
-      }
-    }
     setSavingResult(true);
     try {
       const scoreString = formatSetsToScoreString(validSets);
@@ -633,11 +625,13 @@ function TournamentDetailScreenInner({ route, navigation }) {
                               {[match.score, match.match_date].filter(Boolean).join(' · ')}
                             </Text>
                           )}
-                          {bothApp && (h2hByMatchId[match.id]?.wins != null || h2hByMatchId[match.id]?.losses != null) && (
-                            <Text style={styles.bracketH2h} numberOfLines={1}>
-                              H2H: {h2hByMatchId[match.id].wins}–{h2hByMatchId[match.id].losses}
-                            </Text>
-                          )}
+                          {bothApp &&
+                            (h2hByMatchId[match.id]?.setsWon ?? 0) + (h2hByMatchId[match.id]?.setsLost ?? 0) >
+                              0 && (
+                              <Text style={styles.bracketH2h} numberOfLines={1}>
+                                Sets: {h2hByMatchId[match.id].setsWon}–{h2hByMatchId[match.id].setsLost}
+                              </Text>
+                            )}
                           {!hasWinner && <Text style={styles.bracketTapHint}>Tap to set winner</Text>}
                           {match.remark ? (
                             <Text style={styles.bracketRemark} numberOfLines={2}>{match.remark}</Text>

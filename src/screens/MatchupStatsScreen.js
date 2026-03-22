@@ -343,6 +343,12 @@ export default function MatchupStatsScreen({ route, navigation }) {
               valueP2={detailedStats != null ? String(detailedStats.gamesPlayer2) : null}
             />
             <StatTableRow
+              metric="Days won (more sets that day)"
+              valueP1={h2h != null ? String(h2h.daysWon ?? 0) : null}
+              valueP2={h2h != null ? String(h2h.daysLost ?? 0) : null}
+            />
+            <StatTableRow metric="Days tied (same sets each)" value={h2h != null ? String(h2h.daysTied ?? 0) : '—'} />
+            <StatTableRow
               metric="Set win %"
               valueP1={detailedStats != null ? `${(detailedStats.setWinPctPlayer1 ?? 0).toFixed(1)}%` : null}
               valueP2={detailedStats != null ? `${(detailedStats.setWinPctPlayer2 ?? 0).toFixed(1)}%` : null}

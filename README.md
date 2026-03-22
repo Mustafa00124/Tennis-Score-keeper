@@ -1,6 +1,6 @@
-# Tennis Scorekeeper
+# Tennis Statbot
 
-A mobile tennis match tracking app built with **React Native (Expo)** and **SQLite**. No backend required—everything is stored locally.
+**Tennis Statbot** — a mobile tennis match tracking app built with **React Native (Expo)** and **SQLite**. No backend required—everything is stored locally.
 
 ## Features
 
@@ -62,6 +62,48 @@ This creates `eas.json`. To produce an **APK** (instead of an AAB), ensure a bui
 
 Use the `preview` profile for APK builds.
 
+### Before each Android build (sanity check)
+
+Standalone APKs include **native code** from your dependencies. **Expo Go** already ships many native modules, so mismatches often only show up in a release build.
+
+1. **Align Expo packages with your SDK** (always use this for Expo-owned packages):
+
+   ```bash
+   npx expo install expo-linear-gradient expo-image-picker expo-sqlite expo-asset expo-status-bar
+   ```
+
+   Or run `npx expo install --fix` to fix anything out of range.
+
+2. **Run the project health check:**
+
+   ```bash
+   npx expo-doctor
+   ```
+
+   Fix any reported issues (e.g. wrong package versions, invalid `app.json` assets).
+
+3. **Native modules used in this app** (must be in `package.json` and compatible with your Expo SDK): `expo-sqlite`, `expo-linear-gradient`, `expo-image-picker`, `expo-asset`, `react-native-screens`, `react-native-safe-area-context`.
+
+4. **Config plugins in `app.json`** – Standalone builds use `expo prebuild` under the hood. This project lists `expo-asset`, `expo-sqlite`, and **`expo-image-picker`** (photo library permission strings / Android permission wiring). If you add another native library (camera, maps, notifications, etc.), add its Expo config plugin there too.
+
+5. **App icon** – `expo-doctor` expects a **square PNG** for `expo.icon`. Using a non-square JPG can warn or cause store/build quirks. Prefer e.g. `1024×1024` `icon.png` and point `icon` at it when you can.
+
+6. **Quick scripts** (from project root):
+
+   ```bash
+   npm run expo:fix   # align Expo package versions to the installed SDK
+   npm run doctor     # same as npx expo-doctor
+   ```
+
+### Common “Expo Go works, APK doesn’t” causes
+
+| Area | What to watch |
+|------|----------------|
+| **Native version skew** | Always use `npx expo install <pkg>` for Expo packages so native + JS match the SDK (e.g. `expo-linear-gradient` for SDK 54). |
+| **SQLite init race** | The DB must finish opening + migrations before any query. This app uses a single init promise and preloads the DB in `App.js` before navigation. |
+| **Permissions** | Gallery flows need `expo-image-picker` in `plugins` for reliable standalone behavior. |
+| **Hermes / release** | Test a release-style build (`eas build` preview APK) before wide distribution; dev/Expo Go timing can hide races. |
+
 ### 4. Build the APK
 
 ```bash
@@ -106,13 +148,21 @@ adb install path/to/the/file.apk
 
 ## Tech stack
 
-- **Expo** (~52) with React Native
+- **Expo** (~54) with React Native
 - **expo-sqlite** for local database
 - **React Navigation** (bottom tabs + native stack)
 
 Data is stored in SQLite on device. The structure (players, matches, set_scores) is ready for future expansion (e.g. cloud sync or more advanced stats).
 
 **Stats and deletes:** All stats (wins, losses, H2H, matchup stats, tournament standings) are computed from the database when a screen loads. There is no separate stats cache. So when you delete a player, match, or tournament, or edit/remove a set and save, the next time you open or return to Home, Player detail, Matchup stats, or Tournament detail, that screen runs `load()` again (via `useFocusEffect`) and shows updated data. Stats will reflect the new state immediately after you navigate back.
+
+## Project identifiers
+
+- **Expo slug:** `tennis-scorekeeper` (must match the project linked in `app.json` → `extra.eas.projectId`; Expo dashboard URL uses this even though the app display name is **Tennis Statbot**)
+- **npm package name:** `tennis-statbot`
+- **Android application ID / iOS bundle ID:** `com.tennis.statbot`
+
+If you previously published under `com.tennis.scorekeeper`, this is a **different app ID** for the stores (you cannot ship an update to the old listing with the new ID without transferring/using the same package name).
 
 ## Project structure
 

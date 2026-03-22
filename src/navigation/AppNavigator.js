@@ -28,7 +28,7 @@ function HeaderTitleWithIcon() {
   return (
     <View style={styles.headerTitleWrap}>
       <Image source={require('../../media/App-Icon.jpg')} style={styles.headerIcon} />
-      <Text style={styles.headerTitleText}>AI Tennis Record Keeper</Text>
+      <Text style={styles.headerTitleText}>Tennis Statbot</Text>
     </View>
   );
 }

@@ -1,8 +1,36 @@
 import * as SQLite from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system';
 import { isSetComplete } from '../utils/tennisScoring';
 
-const DB_NAME = 'tennis_scorekeeper.db';
-let db = null;
+/** On-device SQLite filename (was `tennis_scorekeeper.db`; migrated on first launch if needed). */
+const DB_NAME = 'tennis_statbot.db';
+const LEGACY_DB_FILE = 'tennis_scorekeeper.db';
+
+/** Move legacy DB file so existing installs keep data after rename. */
+async function migrateLegacySqliteFileIfNeeded() {
+  try {
+    const dir = SQLite.defaultDatabaseDirectory;
+    if (dir == null || typeof dir !== 'string') return;
+    const base = dir.replace(/\/+$/, '');
+    const legacyPath = `${base}/${LEGACY_DB_FILE}`;
+    const newPath = `${base}/${DB_NAME}`;
+    const newInfo = await FileSystem.getInfoAsync(newPath);
+    if (newInfo.exists) return;
+    const legacyInfo = await FileSystem.getInfoAsync(legacyPath);
+    if (!legacyInfo.exists) return;
+    await FileSystem.moveAsync({ from: legacyPath, to: newPath });
+  } catch (_) {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Single-flight DB open + schema/migrations. Important: we must NOT expose the
+ * SQLite handle until execAsync(SCHEMA) completes; otherwise concurrent getDb()
+ * callers can run queries mid-migration and hit NativeDatabase.prepareAsync NPE
+ * (common in release builds; Expo Go timing often hides it).
+ */
+let dbPromise = null;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS players (
@@ -46,6 +74,7 @@ const SCHEMA = `
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'ongoing',
     draw_size INTEGER NOT NULL,
+    format TEXT DEFAULT 'knockout',
     date TEXT,
     description TEXT,
     remarks TEXT,
@@ -80,62 +109,77 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_tournament_matches_tournament ON tournament_matches(tournament_id);
 `;
 
+async function openDatabaseAndMigrate() {
+  await migrateLegacySqliteFileIfNeeded();
+  const database = await SQLite.openDatabaseAsync(DB_NAME);
+  await database.execAsync('PRAGMA foreign_keys = ON;');
+  await database.execAsync(SCHEMA);
+  try {
+    await database.execAsync('ALTER TABLE players ADD COLUMN profile_image TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE players ADD COLUMN description TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE players ADD COLUMN start_date TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE players ADD COLUMN racket_level TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE matches ADD COLUMN remarks TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE matches ADD COLUMN images TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournaments ADD COLUMN date TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournaments ADD COLUMN description TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournaments ADD COLUMN remarks TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournaments ADD COLUMN images TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE set_scores ADD COLUMN tiebreak_player1 INTEGER');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE set_scores ADD COLUMN tiebreak_player2 INTEGER');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournaments ADD COLUMN format TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournament_matches ADD COLUMN remark TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournament_matches ADD COLUMN score TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournament_matches ADD COLUMN match_date TEXT');
+  } catch (_) {}
+  try {
+    await database.execAsync('ALTER TABLE tournament_matches ADD COLUMN remarks TEXT');
+  } catch (_) {}
+  return database;
+}
+
 export async function getDb() {
-  if (db) return db;
-  db = await SQLite.openDatabaseAsync(DB_NAME);
-  await db.execAsync(SCHEMA);
-  try {
-    await db.execAsync('ALTER TABLE players ADD COLUMN profile_image TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE players ADD COLUMN description TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE players ADD COLUMN start_date TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE players ADD COLUMN racket_level TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE matches ADD COLUMN remarks TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE matches ADD COLUMN images TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournaments ADD COLUMN date TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournaments ADD COLUMN description TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournaments ADD COLUMN remarks TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournaments ADD COLUMN images TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE set_scores ADD COLUMN tiebreak_player1 INTEGER');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE set_scores ADD COLUMN tiebreak_player2 INTEGER');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournaments ADD COLUMN format TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN remark TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN score TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN match_date TEXT');
-  } catch (_) {}
-  try {
-    await db.execAsync('ALTER TABLE tournament_matches ADD COLUMN remarks TEXT');
-  } catch (_) {}
-  return db;
+  if (!dbPromise) {
+    dbPromise = (async () => {
+      try {
+        return await openDatabaseAndMigrate();
+      } catch (e) {
+        dbPromise = null;
+        throw e;
+      }
+    })();
+  }
+  return dbPromise;
 }
 
 // --- Tournaments ---
@@ -716,8 +760,10 @@ export async function getMatchResult(matchId) {
 
 export async function getPlayerStats(playerId) {
   const matches = await getMatchesForPlayer(playerId);
-  let wins = 0;
-  let recordedMatches = 0;
+  let daysWon = 0;
+  let daysLost = 0;
+  let daysTied = 0;
+  let daysNoResult = 0;
   let totalGamesWon = 0;
   let totalSetsWon = 0;
   let totalSetsPlayed = 0;
@@ -726,25 +772,22 @@ export async function getPlayerStats(playerId) {
   let bagelsServed = 0;
   let breadsticksServed = 0;
   const opponentCounts = {};
-  const matchWins = [];
+  /** Day win streak (you won more sets than opponent that day); newest match first in list */
+  const dayOutcomes = [];
 
   for (const match of matches) {
     const result = await getMatchResult(match.id);
     if (!result) continue;
-    if (result.winnerId == null) {
-      incompleteSets += result.incompleteSetCount ?? 0;
-      continue;
-    }
-    recordedMatches++;
     incompleteSets += result.incompleteSetCount ?? 0;
     const isPlayer1 = match.player1_id === playerId;
-    const won = result.winnerId === playerId;
-    if (won) wins++;
-    matchWins.push(won);
+    const mySets = isPlayer1 ? result.setsPlayer1 : result.setsPlayer2;
+    const oppSets = isPlayer1 ? result.setsPlayer2 : result.setsPlayer1;
+
+    totalSetsWon += mySets;
+    totalSetsPlayed += mySets + oppSets;
     totalGamesWon += isPlayer1 ? result.gamesPlayer1 : result.gamesPlayer2;
-    totalSetsWon += isPlayer1 ? result.setsPlayer1 : result.setsPlayer2;
-    totalSetsPlayed += result.setsPlayer1 + result.setsPlayer2;
     totalGamesPlayed += result.gamesPlayer1 + result.gamesPlayer2;
+
     const sets = await getSetScoresForMatch(match.id);
     for (const s of sets) {
       if (!isSetComplete(s.games_player1, s.games_player2, s.tiebreak_player1, s.tiebreak_player2)) continue;
@@ -753,20 +796,37 @@ export async function getPlayerStats(playerId) {
       if (myGames === 6 && oppGames === 0) bagelsServed++;
       if (myGames === 6 && oppGames === 1) breadsticksServed++;
     }
+
     const opponentId = isPlayer1 ? match.player2_id : match.player1_id;
     const opponentName = isPlayer1 ? match.player2_name : match.player1_name;
     if (!opponentCounts[opponentId]) {
       opponentCounts[opponentId] = { playerId: opponentId, name: opponentName, matches: 0 };
     }
     opponentCounts[opponentId].matches += 1;
+
+    const completeSetsThatDay = mySets + oppSets;
+    if (completeSetsThatDay === 0) {
+      daysNoResult++;
+      continue;
+    }
+    if (mySets > oppSets) {
+      daysWon++;
+      dayOutcomes.push(true);
+    } else if (mySets < oppSets) {
+      daysLost++;
+      dayOutcomes.push(false);
+    } else {
+      daysTied++;
+      dayOutcomes.push(false);
+    }
   }
 
   let currentWinStreak = 0;
-  for (let i = 0; i < matchWins.length && matchWins[i]; i++) currentWinStreak++;
+  for (let i = 0; i < dayOutcomes.length && dayOutcomes[i]; i++) currentWinStreak++;
   let bestWinStreak = 0;
   let run = 0;
-  for (let i = 0; i < matchWins.length; i++) {
-    if (matchWins[i]) {
+  for (let i = 0; i < dayOutcomes.length; i++) {
+    if (dayOutcomes[i]) {
       run++;
       if (run > bestWinStreak) bestWinStreak = run;
     } else {
@@ -775,14 +835,22 @@ export async function getPlayerStats(playerId) {
   }
 
   const mostPlayedWith = Object.values(opponentCounts).sort((a, b) => b.matches - a.matches)[0] || null;
-  const losses = recordedMatches - wins;
-  const winPct = recordedMatches > 0 ? (wins / recordedMatches) * 100 : 0;
+  const daysDecided = daysWon + daysLost + daysTied;
+  const setWinPct = totalSetsPlayed > 0 ? (totalSetsWon / totalSetsPlayed) * 100 : 0;
+  const gameWinPct = totalGamesPlayed > 0 ? (totalGamesWon / totalGamesPlayed) * 100 : 0;
 
   return {
     matchesPlayed: matches.length,
-    recordedMatches,
-    wins,
-    losses,
+    /** Days with at least one completed set (outcome: win, loss, or tie on sets) */
+    recordedMatches: daysDecided,
+    daysWon,
+    daysLost,
+    daysTied,
+    daysNoResult,
+    /** @deprecated use daysWon — kept for older call sites */
+    wins: daysWon,
+    /** @deprecated use daysLost */
+    losses: daysLost,
     totalGamesWon,
     totalSetsWon,
     totalSetsPlayed,
@@ -790,7 +858,11 @@ export async function getPlayerStats(playerId) {
     incompleteSets,
     totalUniquePlayers: Object.keys(opponentCounts).length,
     mostPlayedWith,
-    winPercentage: winPct,
+    /** % of completed sets won (primary “win rate”) */
+    setWinPercentage: setWinPct,
+    gameWinPercentage: gameWinPct,
+    /** @deprecated use setWinPercentage */
+    winPercentage: setWinPct,
     currentWinStreak,
     bestWinStreak,
     bagelsServed,
@@ -798,19 +870,45 @@ export async function getPlayerStats(playerId) {
   };
 }
 
+/**
+ * Head-to-head between two players (all match days).
+ * Primary: completed sets won. Secondary: days won / lost / tied (by who won more sets that day).
+ */
 export async function getHeadToHead(playerAId, playerBId) {
   const matches = await getMatchesForPlayer(playerAId);
-  let wins = 0;
-  let losses = 0;
+  let setsWon = 0;
+  let setsLost = 0;
+  let daysWon = 0;
+  let daysLost = 0;
+  let daysTied = 0;
   for (const m of matches) {
     const otherId = m.player1_id === playerAId ? m.player2_id : m.player1_id;
     if (otherId !== playerBId) continue;
     const result = await getMatchResult(m.id);
-    if (!result || result.winnerId == null) continue;
-    if (result.winnerId === playerAId) wins++;
-    else losses++;
+    if (!result) continue;
+    const aIsP1 = m.player1_id === playerAId;
+    const aSets = aIsP1 ? result.setsPlayer1 : result.setsPlayer2;
+    const bSets = aIsP1 ? result.setsPlayer2 : result.setsPlayer1;
+    setsWon += aSets;
+    setsLost += bSets;
+    const played = aSets + bSets;
+    if (played === 0) continue;
+    if (aSets > bSets) daysWon++;
+    else if (bSets > aSets) daysLost++;
+    else daysTied++;
   }
-  return { wins, losses };
+  const totalSets = setsWon + setsLost;
+  const setWinPct = totalSets > 0 ? (setsWon / totalSets) * 100 : 0;
+  return {
+    setsWon,
+    setsLost,
+    setWinPct,
+    daysWon,
+    daysLost,
+    daysTied,
+    wins: daysWon,
+    losses: daysLost,
+  };
 }
 
 export async function getMatchWithDetails(matchId) {

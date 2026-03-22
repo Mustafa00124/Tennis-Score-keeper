@@ -138,18 +138,6 @@ export default function MatchDetailScreen({ route, navigation }) {
         return;
       }
     }
-    const completedSets = validSets.filter((s) =>
-      isSetComplete(s.gamesPlayer1, s.gamesPlayer2, s.tiebreakPlayer1, s.tiebreakPlayer2)
-    );
-    if (completedSets.length > 0) {
-      const p1Sets = completedSets.filter((s) => s.gamesPlayer1 > s.gamesPlayer2).length;
-      const p2Sets = completedSets.filter((s) => s.gamesPlayer2 > s.gamesPlayer1).length;
-      if (p1Sets === p2Sets) {
-        Alert.alert('No winner', 'One player must win more completed sets than the other.');
-        return;
-      }
-    }
-
     const dateStr = (datePlayed.trim() || '').slice(0, 10);
     const payload = {
       datePlayed: datePlayed.trim() || '',
@@ -233,7 +221,10 @@ export default function MatchDetailScreen({ route, navigation }) {
             <Text style={styles.addSetLinkText}>+ Add set</Text>
           </TouchableOpacity>
         </View>
-        <Text style={styles.setHint}>7–6 or 6–7 requires tiebreak. Incomplete sets are saved but not counted in W/L.</Text>
+        <Text style={styles.setHint}>
+          7–6 or 6–7 requires tiebreak. Incomplete sets are saved but not counted in W/L. Split days (e.g. 1–1 on completed
+          sets) are saved as a tie—no match winner for win/loss stats, but all sets and games still count.
+        </Text>
         {sets.map((set, i) => {
           const g1 = set.gamesPlayer1 === '' ? null : parseInt(set.gamesPlayer1, 10);
           const g2 = set.gamesPlayer2 === '' ? null : parseInt(set.gamesPlayer2, 10);

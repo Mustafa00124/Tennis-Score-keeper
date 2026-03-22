@@ -213,7 +213,19 @@ export default function PlayerDetailScreen({ route, navigation }) {
         <Text style={styles.sectionTitle}>Stats</Text>
         {stats && (
           <View style={styles.table}>
-            <StatRow label="Recorded matches" value={stats.recordedMatches ?? 0} />
+            <StatRow label="Days recorded" value={stats.matchesPlayed ?? 0} />
+            <StatRow
+              label="Days with set results"
+              value={stats.recordedMatches ?? 0}
+            />
+            <StatRow
+              label="Days W / L / T (by sets that day)"
+              value={`${stats.daysWon ?? stats.wins ?? 0} / ${stats.daysLost ?? stats.losses ?? 0} / ${stats.daysTied ?? 0}`}
+            />
+            <StatRow label="Set win %" value={`${(stats.setWinPercentage ?? stats.winPercentage ?? 0).toFixed(1)}%`} />
+            <StatRow label="Game win %" value={`${(stats.gameWinPercentage ?? 0).toFixed(1)}%`} />
+            <StatRow label="Sets won / played" value={`${stats.totalSetsWon ?? 0} / ${stats.totalSetsPlayed ?? 0}`} />
+            <StatRow label="Games won / played" value={`${stats.totalGamesWon ?? 0} / ${stats.totalGamesPlayed ?? 0}`} />
             <StatRow label="Total unique players" value={stats.totalUniquePlayers ?? 0} />
             <StatRow
               label="Most played with"
@@ -223,10 +235,11 @@ export default function PlayerDetailScreen({ route, navigation }) {
                   : 'No data'
               }
             />
-            <StatRow label="Wins / Losses" value={`${stats.wins} / ${stats.losses}`} />
-            <StatRow label="Win rate" value={`${stats.winPercentage.toFixed(1)}%`} />
-            <StatRow label="Current win streak" value={stats.currentWinStreak ?? 0} />
-            <StatRow label="Best win streak" value={stats.bestWinStreak ?? 0} />
+            <StatRow label="Day win streak (more sets that day)" value={stats.currentWinStreak ?? 0} />
+            <StatRow
+              label="Best day win streak"
+              value={stats.bestWinStreak ?? 0}
+            />
             <StatRow label="Bagels served (6–0)" value={stats.bagelsServed ?? 0} />
             <StatRow label="Breadsticks (6–1)" value={stats.breadsticksServed ?? 0} />
             <StatRow label="Incomplete sets" value={stats.incompleteSets ?? 0} />
@@ -377,15 +390,32 @@ function MatchRow({ match, opponent, isPlayer1, playerId, onPress }) {
       </TouchableOpacity>
     );
   }
-  const won = result.winnerId === playerId;
   const setsFor = isPlayer1 ? result.setsPlayer1 : result.setsPlayer2;
   const setsAgainst = isPlayer1 ? result.setsPlayer2 : result.setsPlayer1;
   const scoreStr = `${setsFor}-${setsAgainst}`;
+  const isTiedDay =
+    result.winnerId == null &&
+    !result.hasIncompleteSets &&
+    result.setsPlayer1 === result.setsPlayer2 &&
+    result.setsPlayer1 > 0;
+  const won = !isTiedDay && result.winnerId === playerId;
+  const isUndecided = result.winnerId == null && !isTiedDay;
+
+  let outcomeLabel = won ? 'W' : 'L';
+  let rowStyles = [styles.matchRow];
+  if (isTiedDay) {
+    outcomeLabel = 'T';
+    rowStyles.push(styles.matchRowTie);
+  } else if (isUndecided) {
+    outcomeLabel = '—';
+  } else if (won) {
+    rowStyles.push(styles.matchRowWin);
+  }
 
   return (
-    <TouchableOpacity style={[styles.matchRow, won && styles.matchRowWin]} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity style={rowStyles} onPress={onPress} activeOpacity={0.8}>
       <Text style={styles.matchText}>
-        {won ? 'W' : 'L'} {scoreStr} vs {opponent}
+        {outcomeLabel} {scoreStr} vs {opponent}
       </Text>
       <Text style={styles.matchDate}>{match.date_played || 'No date'}</Text>
     </TouchableOpacity>
@@ -450,6 +480,7 @@ const styles = StyleSheet.create({
     borderLeftColor: '#cfd9cc',
   },
   matchRowWin: { borderLeftColor: '#1a472a' },
+  matchRowTie: { borderLeftColor: '#b8860b' },
   matchText: { fontSize: 15, color: '#1a1a1a', flex: 1, paddingRight: 8 },
   matchDate: { fontSize: 13, color: '#666' },
   hint: { padding: 24, textAlign: 'center', color: '#666' },

@@ -1,21 +1,29 @@
 {
   "expo": {
     "icon": "./media/App-Icon.jpg",
-    "name": "Tennis Scorekeeper",
+    "name": "Tennis Statbot",
     "slug": "tennis-scorekeeper",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.tennis.scorekeeper"
+      "bundleIdentifier": "com.tennis.statbot"
     },
     "android": {
-      "package": "com.tennis.scorekeeper"
+      "package": "com.tennis.statbot"
     },
     "plugins": [
       "expo-asset",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Tennis Statbot to access your photos to add images to players, matches, and tournaments.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
     ],
     "extra": {
       "eas": {

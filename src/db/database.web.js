@@ -4,12 +4,35 @@
  */
 import { isSetComplete } from '../utils/tennisScoring';
 
-const KEY_PLAYERS = 'tennis_players';
-const KEY_MATCHES = 'tennis_matches';
-const KEY_SET_SCORES = 'tennis_set_scores';
-const KEY_TOURNAMENTS = 'tennis_tournaments';
-const KEY_TOURNAMENT_PARTICIPANTS = 'tennis_tournament_participants';
-const KEY_TOURNAMENT_MATCHES = 'tennis_tournament_matches';
+const KEY_PLAYERS = 'tennis_statbot_players';
+const KEY_MATCHES = 'tennis_statbot_matches';
+const KEY_SET_SCORES = 'tennis_statbot_set_scores';
+const KEY_TOURNAMENTS = 'tennis_statbot_tournaments';
+const KEY_TOURNAMENT_PARTICIPANTS = 'tennis_statbot_tournament_participants';
+const KEY_TOURNAMENT_MATCHES = 'tennis_statbot_tournament_matches';
+
+const WEB_STORAGE_MIGRATION_FLAG = 'tennis_statbot_storage_migrated_v1';
+const LEGACY_WEB_KEYS = [
+  ['tennis_players', KEY_PLAYERS],
+  ['tennis_matches', KEY_MATCHES],
+  ['tennis_set_scores', KEY_SET_SCORES],
+  ['tennis_tournaments', KEY_TOURNAMENTS],
+  ['tennis_tournament_participants', KEY_TOURNAMENT_PARTICIPANTS],
+  ['tennis_tournament_matches', KEY_TOURNAMENT_MATCHES],
+];
+
+(function migrateWebStorageOnce() {
+  if (typeof localStorage === 'undefined') return;
+  if (localStorage.getItem(WEB_STORAGE_MIGRATION_FLAG)) return;
+  for (const [legacy, next] of LEGACY_WEB_KEYS) {
+    const v = localStorage.getItem(legacy);
+    if (v != null && localStorage.getItem(next) == null) {
+      localStorage.setItem(next, v);
+      localStorage.removeItem(legacy);
+    }
+  }
+  localStorage.setItem(WEB_STORAGE_MIGRATION_FLAG, '1');
+})();
 
 function loadPlayers() {
   try {
@@ -336,8 +359,10 @@ export async function getMatchResult(matchId) {
 
 export async function getPlayerStats(playerId) {
   const matches = await getMatchesForPlayer(playerId);
-  let wins = 0;
-  let recordedMatches = 0;
+  let daysWon = 0;
+  let daysLost = 0;
+  let daysTied = 0;
+  let daysNoResult = 0;
   let totalGamesWon = 0;
   let totalSetsWon = 0;
   let totalSetsPlayed = 0;
@@ -346,24 +371,21 @@ export async function getPlayerStats(playerId) {
   let bagelsServed = 0;
   let breadsticksServed = 0;
   const opponentCounts = {};
-  const matchWins = [];
+  const dayOutcomes = [];
+
   for (const match of matches) {
     const result = await getMatchResult(match.id);
     if (!result) continue;
-    if (result.winnerId == null) {
-      incompleteSets += result.incompleteSetCount ?? 0;
-      continue;
-    }
-    recordedMatches++;
     incompleteSets += result.incompleteSetCount ?? 0;
     const isPlayer1 = match.player1_id === playerId;
-    const won = result.winnerId === playerId;
-    if (won) wins++;
-    matchWins.push(won);
+    const mySets = isPlayer1 ? result.setsPlayer1 : result.setsPlayer2;
+    const oppSets = isPlayer1 ? result.setsPlayer2 : result.setsPlayer1;
+
+    totalSetsWon += mySets;
+    totalSetsPlayed += mySets + oppSets;
     totalGamesWon += isPlayer1 ? result.gamesPlayer1 : result.gamesPlayer2;
-    totalSetsWon += isPlayer1 ? result.setsPlayer1 : result.setsPlayer2;
-    totalSetsPlayed += result.setsPlayer1 + result.setsPlayer2;
     totalGamesPlayed += result.gamesPlayer1 + result.gamesPlayer2;
+
     const sets = await getSetScoresForMatch(match.id);
     for (const s of sets) {
       if (!isSetComplete(s.games_player1, s.games_player2, s.tiebreak_player1, s.tiebreak_player2)) continue;
@@ -372,33 +394,58 @@ export async function getPlayerStats(playerId) {
       if (myGames === 6 && oppGames === 0) bagelsServed++;
       if (myGames === 6 && oppGames === 1) breadsticksServed++;
     }
+
     const opponentId = isPlayer1 ? match.player2_id : match.player1_id;
     const opponentName = isPlayer1 ? match.player2_name : match.player1_name;
     if (!opponentCounts[opponentId]) {
       opponentCounts[opponentId] = { playerId: opponentId, name: opponentName, matches: 0 };
     }
     opponentCounts[opponentId].matches += 1;
+
+    const completeSetsThatDay = mySets + oppSets;
+    if (completeSetsThatDay === 0) {
+      daysNoResult++;
+      continue;
+    }
+    if (mySets > oppSets) {
+      daysWon++;
+      dayOutcomes.push(true);
+    } else if (mySets < oppSets) {
+      daysLost++;
+      dayOutcomes.push(false);
+    } else {
+      daysTied++;
+      dayOutcomes.push(false);
+    }
   }
+
   let currentWinStreak = 0;
-  for (let i = 0; i < matchWins.length && matchWins[i]; i++) currentWinStreak++;
+  for (let i = 0; i < dayOutcomes.length && dayOutcomes[i]; i++) currentWinStreak++;
   let bestWinStreak = 0;
   let run = 0;
-  for (let i = 0; i < matchWins.length; i++) {
-    if (matchWins[i]) {
+  for (let i = 0; i < dayOutcomes.length; i++) {
+    if (dayOutcomes[i]) {
       run++;
       if (run > bestWinStreak) bestWinStreak = run;
     } else {
       run = 0;
     }
   }
+
   const mostPlayedWith = Object.values(opponentCounts).sort((a, b) => b.matches - a.matches)[0] || null;
-  const losses = recordedMatches - wins;
-  const winPercentage = recordedMatches > 0 ? (wins / recordedMatches) * 100 : 0;
+  const daysDecided = daysWon + daysLost + daysTied;
+  const setWinPct = totalSetsPlayed > 0 ? (totalSetsWon / totalSetsPlayed) * 100 : 0;
+  const gameWinPct = totalGamesPlayed > 0 ? (totalGamesWon / totalGamesPlayed) * 100 : 0;
+
   return {
     matchesPlayed: matches.length,
-    recordedMatches,
-    wins,
-    losses,
+    recordedMatches: daysDecided,
+    daysWon,
+    daysLost,
+    daysTied,
+    daysNoResult,
+    wins: daysWon,
+    losses: daysLost,
     totalGamesWon,
     totalSetsWon,
     totalSetsPlayed,
@@ -406,7 +453,9 @@ export async function getPlayerStats(playerId) {
     incompleteSets,
     totalUniquePlayers: Object.keys(opponentCounts).length,
     mostPlayedWith,
-    winPercentage,
+    setWinPercentage: setWinPct,
+    gameWinPercentage: gameWinPct,
+    winPercentage: setWinPct,
     currentWinStreak,
     bestWinStreak,
     bagelsServed,
@@ -416,16 +465,39 @@ export async function getPlayerStats(playerId) {
 
 export async function getHeadToHead(playerAId, playerBId) {
   const matches = await getMatchesForPlayer(playerAId);
-  let wins = 0, losses = 0;
+  let setsWon = 0;
+  let setsLost = 0;
+  let daysWon = 0;
+  let daysLost = 0;
+  let daysTied = 0;
   for (const m of matches) {
     const otherId = m.player1_id === playerAId ? m.player2_id : m.player1_id;
     if (otherId !== playerBId) continue;
     const result = await getMatchResult(m.id);
-    if (!result || result.winnerId == null) continue;
-    if (result.winnerId === playerAId) wins++;
-    else losses++;
+    if (!result) continue;
+    const aIsP1 = m.player1_id === playerAId;
+    const aSets = aIsP1 ? result.setsPlayer1 : result.setsPlayer2;
+    const bSets = aIsP1 ? result.setsPlayer2 : result.setsPlayer1;
+    setsWon += aSets;
+    setsLost += bSets;
+    const played = aSets + bSets;
+    if (played === 0) continue;
+    if (aSets > bSets) daysWon++;
+    else if (bSets > aSets) daysLost++;
+    else daysTied++;
   }
-  return { wins, losses };
+  const totalSets = setsWon + setsLost;
+  const setWinPct = totalSets > 0 ? (setsWon / totalSets) * 100 : 0;
+  return {
+    setsWon,
+    setsLost,
+    setWinPct,
+    daysWon,
+    daysLost,
+    daysTied,
+    wins: daysWon,
+    losses: daysLost,
+  };
 }
 
 export async function getMatchWithDetails(matchId) {
