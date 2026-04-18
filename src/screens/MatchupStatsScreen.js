@@ -354,12 +354,12 @@ export default function MatchupStatsScreen({ route, navigation }) {
               valueP2={detailedStats != null ? `${(detailedStats.setWinPctPlayer2 ?? 0).toFixed(1)}%` : null}
             />
             <StatTableRow
-              metric="Current win streak"
+              metric="Current set win streak"
               valueP1={detailedStats != null ? String(detailedStats.currentWinStreakPlayer1 ?? 0) : null}
               valueP2={detailedStats != null ? String(detailedStats.currentWinStreakPlayer2 ?? 0) : null}
             />
             <StatTableRow
-              metric="Best win streak"
+              metric="Best set win streak"
               valueP1={detailedStats != null ? String(detailedStats.bestWinStreakPlayer1 ?? 0) : null}
               valueP2={detailedStats != null ? String(detailedStats.bestWinStreakPlayer2 ?? 0) : null}
             />

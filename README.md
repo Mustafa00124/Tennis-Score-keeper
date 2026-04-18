@@ -1,6 +1,6 @@
-# Tennis Statbot
+# Pocket Tour
 
-**Tennis Statbot** — a mobile tennis match tracking app built with **React Native (Expo)** and **SQLite**. No backend required—everything is stored locally.
+**Pocket Tour** — a mobile tennis match tracking app built with **React Native (Expo)** and **SQLite**. No backend required—everything is stored locally.
 
 ## Features
 
@@ -158,9 +158,9 @@ Data is stored in SQLite on device. The structure (players, matches, set_scores)
 
 ## Project identifiers
 
-- **Expo slug:** `tennis-scorekeeper` (must match the project linked in `app.json` → `extra.eas.projectId`; Expo dashboard URL uses this even though the app display name is **Tennis Statbot**)
+- **Expo slug:** `tennis-scorekeeper` (must match the project linked in `app.json` → `extra.eas.projectId`; Expo dashboard URL uses this slug; app display name is **Pocket Tour**)
 - **npm package name:** `tennis-statbot`
-- **Android application ID / iOS bundle ID:** `com.tennis.statbot`
+- **Android application ID / iOS bundle ID:** `com.personaltour.tennis` (see `app.json`)
 
 If you previously published under `com.tennis.scorekeeper`, this is a **different app ID** for the stores (you cannot ship an update to the old listing with the new ID without transferring/using the same package name).
 
@@ -168,5 +168,5 @@ If you previously published under `com.tennis.scorekeeper`, this is a **differen
 
 - `App.js` – Entry, wraps app in navigation and safe area.
 - `src/db/database.native.js` / `database.web.js` – SQLite (native) or localStorage (web); same API for players, matches, stats, tournaments.
-- `src/navigation/AppNavigator.js` – Native stack (Home, MatchDetail, MatchupStats, PlayerDetail, NewTournament, TournamentDetail).
-- `src/screens/` – HomeScreen, MatchDetailScreen, MatchupStatsScreen, MatchViewScreen, PlayerDetailScreen, NewTournamentScreen, TournamentDetailScreen.
+- `src/navigation/AppNavigator.js` – Native stack (Home, MatchDetail, MatchupStats, PlayerDetail, TournamentDetail, TourDetail, TourStats).
+- `src/screens/` – HomeScreen, MatchDetailScreen, MatchupStatsScreen, MatchViewScreen, PlayerDetailScreen, TournamentDetailScreen, TourDetailScreen, TourStatsScreen.

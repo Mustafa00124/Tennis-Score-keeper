@@ -235,11 +235,8 @@ export default function PlayerDetailScreen({ route, navigation }) {
                   : 'No data'
               }
             />
-            <StatRow label="Day win streak (more sets that day)" value={stats.currentWinStreak ?? 0} />
-            <StatRow
-              label="Best day win streak"
-              value={stats.bestWinStreak ?? 0}
-            />
+            <StatRow label="Current set win streak" value={stats.currentWinStreak ?? 0} />
+            <StatRow label="Best set win streak" value={stats.bestWinStreak ?? 0} />
             <StatRow label="Bagels served (6–0)" value={stats.bagelsServed ?? 0} />
             <StatRow label="Breadsticks (6–1)" value={stats.breadsticksServed ?? 0} />
             <StatRow label="Incomplete sets" value={stats.incompleteSets ?? 0} />
