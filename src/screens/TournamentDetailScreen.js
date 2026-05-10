@@ -22,7 +22,30 @@ import {
   createMatchup,
   getHeadToHead,
 } from '../db/database';
-import { gamesInValidRange, setNeedsTiebreak, isSetValidForSave, isSetComplete } from '../utils/tennisScoring';
+import {
+  gamesInValidRange,
+  setNeedsTiebreak,
+  isSetValidForSave,
+  inferMatchWinnerParticipantFromSetRows,
+} from '../utils/tennisScoring';
+
+/** Rows with both game scores filled (0–7), including 0–0; used for conceded match optional partial score. */
+function collectRetirementRowsFromForm(resultSets) {
+  const out = [];
+  for (const s of resultSets) {
+    const a = s.gamesPlayer1 === '' ? null : parseInt(s.gamesPlayer1, 10);
+    const b = s.gamesPlayer2 === '' ? null : parseInt(s.gamesPlayer2, 10);
+    if (a == null || b == null || !Number.isInteger(a) || !Number.isInteger(b)) continue;
+    if (!gamesInValidRange(a, b)) continue;
+    out.push({
+      gamesPlayer1: a,
+      gamesPlayer2: b,
+      tiebreakPlayer1: s.tiebreakPlayer1,
+      tiebreakPlayer2: s.tiebreakPlayer2,
+    });
+  }
+  return out;
+}
 
 /** Catches render errors and shows a message instead of blank */
 class TournamentDetailErrorBoundary extends React.Component {
@@ -64,8 +87,8 @@ const BK_CARD_H = 76;
 const BK_CONN_W = 52;          // width of the connector zone between columns
 const BK_COL_W = BK_CARD_W + BK_CONN_W;
 const BK_UNIT = 132;           // vertical slot height for one first-round match (enough for winner + score/date)
-const BK_LINE = 2;
-const BK_LINE_COLOR = 'rgba(255,255,255,0.65)';
+const BK_LINE = 3;
+const BK_LINE_COLOR = '#7fd99a';
 
 /**
  * Renders a tree-style knockout bracket.
@@ -144,12 +167,15 @@ function KnockoutBracket({ matchesByRound, roundIndices, totalRounds, openMatchA
             </Text>
           )}
           {bothApp && h2h && (h2h.setsWon ?? 0) + (h2h.setsLost ?? 0) > 0 && (
-            <Text style={{ fontSize: 9, color: '#5a7a5a', marginTop: 1 }} numberOfLines={1}>
+            <Text style={{ fontSize: 9, color: '#5a7a5a', marginTop: 1 }} numberOfLines={2}>
               Sets {h2h.setsWon}–{h2h.setsLost}
+              {(h2h.gamesWon ?? 0) + (h2h.gamesLost ?? 0) > 0
+                ? ` · Games ${h2h.gamesWon ?? 0}–${h2h.gamesLost ?? 0}`
+                : ''}
             </Text>
           )}
           {!hasWinner && (match.player1_name !== 'TBD' || match.player2_name !== 'TBD') && (
-            <Text style={{ fontSize: 9, color: '#aaa', marginTop: 2 }}>Tap to set winner</Text>
+            <Text style={{ fontSize: 9, color: '#aaa', marginTop: 2 }}>Tap to enter score</Text>
           )}
           {match.remark ? (
             <Text style={{ fontSize: 9, color: '#666', marginTop: 4, fontStyle: 'italic' }} numberOfLines={2}>{match.remark}</Text>
@@ -211,10 +237,13 @@ function TournamentDetailScreenInner({ route, navigation }) {
   const [remarkModalMatch, setRemarkModalMatch] = useState(null);
   const [remarkModalValue, setRemarkModalValue] = useState('');
   const [matchResultModalMatch, setMatchResultModalMatch] = useState(null);
-  const [resultWinnerId, setResultWinnerId] = useState(null);
   const [resultSets, setResultSets] = useState([{ gamesPlayer1: '', gamesPlayer2: '', tiebreakPlayer1: '', tiebreakPlayer2: '' }]);
   const [resultDate, setResultDate] = useState('');
   const [savingResult, setSavingResult] = useState(false);
+  const [resultMode, setResultMode] = useState('sets'); // 'sets' | 'conceded' (walkover or retirement — pick winner; optional score)
+  const [concededWinnerId, setConcededWinnerId] = useState(null);
+
+  const pidEq = useCallback((a, b) => a != null && b != null && Number(a) === Number(b), []);
 
   const load = useCallback(async () => {
     if (!tournamentId) {
@@ -254,18 +283,6 @@ function TournamentDetailScreenInner({ route, navigation }) {
     }, [load])
   );
 
-  const handleSetWinner = useCallback(
-    async (match, participantId, details = {}) => {
-      try {
-        await setTournamentMatchWinner(match.id, participantId, details);
-        await load();
-      } catch (e) {
-        Alert.alert('Error', e.message || 'Could not set winner');
-      }
-    },
-    [load]
-  );
-
   const getTodayDateString = useCallback(() => {
     const d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -288,18 +305,36 @@ function TournamentDetailScreenInner({ route, navigation }) {
     });
   }, []);
 
-  const openResultModal = useCallback((match) => {
-    setMatchResultModalMatch(match);
-    setResultWinnerId(null);
-    setResultSets(parseScoreToSets(match.score));
-    setResultDate(match.match_date ?? getTodayDateString());
-  }, [getTodayDateString, parseScoreToSets]);
+  const openResultModal = useCallback(
+    (match) => {
+      setMatchResultModalMatch(match);
+      const rawScore = (match.score || '').trim();
+      if (/^wo$/i.test(rawScore) || /^walkover$/i.test(rawScore)) {
+        setResultMode('conceded');
+        setConcededWinnerId(match.winner_participant_id ?? null);
+        setResultSets([{ gamesPlayer1: '', gamesPlayer2: '', tiebreakPlayer1: '', tiebreakPlayer2: '' }]);
+      } else if (/\(ret\.?\)\s*$/i.test(rawScore) || /^retired$/i.test(rawScore)) {
+        setResultMode('conceded');
+        setConcededWinnerId(match.winner_participant_id ?? null);
+        const forSets = rawScore.replace(/\s*\(ret\.?\)\s*$/i, '').trim();
+        const toParse = /^retired$/i.test(forSets) ? '' : forSets;
+        setResultSets(parseScoreToSets(toParse));
+      } else {
+        setResultMode('sets');
+        setConcededWinnerId(null);
+        setResultSets(parseScoreToSets(match.score));
+      }
+      setResultDate(match.match_date ?? getTodayDateString());
+    },
+    [getTodayDateString, parseScoreToSets]
+  );
 
   const closeResultModal = useCallback(() => {
     setMatchResultModalMatch(null);
-    setResultWinnerId(null);
     setResultSets([{ gamesPlayer1: '', gamesPlayer2: '', tiebreakPlayer1: '', tiebreakPlayer2: '' }]);
     setResultDate('');
+    setResultMode('sets');
+    setConcededWinnerId(null);
   }, []);
 
   const addResultSet = useCallback(() => {
@@ -348,12 +383,64 @@ function TournamentDetailScreenInner({ route, navigation }) {
       .join(' - ');
   }, []);
 
+  const formatRetirementScoreString = useCallback((rows) => {
+    if (!rows.length) return 'Retired';
+    const str = rows
+      .map((s) => {
+        if (setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2)) {
+          const tb1 = s.tiebreakPlayer1 != null && s.tiebreakPlayer1 !== '' ? String(s.tiebreakPlayer1) : '';
+          const tb2 = s.tiebreakPlayer2 != null && s.tiebreakPlayer2 !== '' ? String(s.tiebreakPlayer2) : '';
+          return `${s.gamesPlayer1}-${s.gamesPlayer2}(${tb1}-${tb2})`;
+        }
+        return `${s.gamesPlayer1}-${s.gamesPlayer2}`;
+      })
+      .join(' - ');
+    return `${str} (ret.)`;
+  }, []);
+
   const saveMatchResult = useCallback(async () => {
     const match = matchResultModalMatch;
-    if (!match || !resultWinnerId) {
-      Alert.alert('Select winner', 'Choose the winning player.');
+    if (!match) return;
+
+    if (resultMode === 'conceded') {
+      if (!concededWinnerId) {
+        Alert.alert('Match winner', 'Choose who wins (walkover or retirement).');
+        return;
+      }
+      const retireRows = collectRetirementRowsFromForm(resultSets);
+      for (const s of retireRows) {
+        const tb1 = s.tiebreakPlayer1 != null && s.tiebreakPlayer1 !== '' ? String(s.tiebreakPlayer1) : undefined;
+        const tb2 = s.tiebreakPlayer2 != null && s.tiebreakPlayer2 !== '' ? String(s.tiebreakPlayer2) : undefined;
+        if (!isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, tb1, tb2)) {
+          Alert.alert(
+            'Invalid set score',
+            setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2)
+              ? 'Set 7–6 or 6–7 requires a tiebreak score (e.g. 7–4).'
+              : 'Enter games 0–7 per row, or leave rows empty for a walkover with no play.'
+          );
+          return;
+        }
+      }
+      const scoreString =
+        retireRows.length === 0 ? '0-0 (ret.)' : formatRetirementScoreString(retireRows);
+      const remarks = 'Conceded';
+      setSavingResult(true);
+      try {
+        await setTournamentMatchWinner(match.id, concededWinnerId, {
+          score: scoreString,
+          remarks,
+          match_date: resultDate.trim() || undefined,
+        });
+        await load();
+        closeResultModal();
+      } catch (e) {
+        Alert.alert('Error', e.message || 'Could not save result');
+      } finally {
+        setSavingResult(false);
+      }
       return;
     }
+
     const validSets = getValidResultSets();
     if (validSets.length === 0) {
       Alert.alert('Add at least one set', 'Games must be 0–7. For 7–6 or 6–7 add tiebreak score.');
@@ -373,15 +460,18 @@ function TournamentDetailScreenInner({ route, navigation }) {
         return;
       }
     }
-    const completedSets = validSets.filter((s) => {
-      const tb1 = s.tiebreakPlayer1 != null && s.tiebreakPlayer1 !== '' ? String(s.tiebreakPlayer1) : undefined;
-      const tb2 = s.tiebreakPlayer2 != null && s.tiebreakPlayer2 !== '' ? String(s.tiebreakPlayer2) : undefined;
-      return isSetComplete(s.gamesPlayer1, s.gamesPlayer2, tb1, tb2);
-    });
+    const winnerId = inferMatchWinnerParticipantFromSetRows(resultSets, match.player1_participant_id, match.player2_participant_id);
+    if (winnerId == null) {
+      Alert.alert(
+        'Incomplete score',
+        'Enter complete valid sets (e.g. 6–4, or 7–6 with tiebreak). One full set can decide the match, or first to two sets (best-of-three), or first to three (best-of-five).'
+      );
+      return;
+    }
     setSavingResult(true);
     try {
       const scoreString = formatSetsToScoreString(validSets);
-      await setTournamentMatchWinner(match.id, resultWinnerId, {
+      await setTournamentMatchWinner(match.id, winnerId, {
         score: scoreString,
         match_date: resultDate.trim() || undefined,
       });
@@ -392,7 +482,64 @@ function TournamentDetailScreenInner({ route, navigation }) {
     } finally {
       setSavingResult(false);
     }
-  }, [matchResultModalMatch, resultWinnerId, resultSets, resultDate, getValidResultSets, formatSetsToScoreString, load, closeResultModal]);
+  }, [
+    matchResultModalMatch,
+    resultMode,
+    concededWinnerId,
+    resultSets,
+    resultDate,
+    getValidResultSets,
+    formatSetsToScoreString,
+    formatRetirementScoreString,
+    load,
+    closeResultModal,
+  ]);
+
+  const inferredWinnerId = useMemo(
+    () =>
+      matchResultModalMatch
+        ? inferMatchWinnerParticipantFromSetRows(
+            resultSets,
+            matchResultModalMatch.player1_participant_id,
+            matchResultModalMatch.player2_participant_id
+          )
+        : null,
+    [matchResultModalMatch, resultSets]
+  );
+
+  const inferredWinnerName = useMemo(() => {
+    if (!matchResultModalMatch || inferredWinnerId == null) return null;
+    return pidEq(inferredWinnerId, matchResultModalMatch.player1_participant_id)
+      ? matchResultModalMatch.player1_name
+      : matchResultModalMatch.player2_name;
+  }, [matchResultModalMatch, inferredWinnerId, pidEq]);
+
+  const resultSummaryLine = useMemo(() => {
+    if (!matchResultModalMatch) return '';
+    if (resultMode === 'conceded') {
+      if (!concededWinnerId) return 'Choose match winner (walkover / retirement).';
+      const name = pidEq(concededWinnerId, matchResultModalMatch.player1_participant_id)
+        ? matchResultModalMatch.player1_name
+        : matchResultModalMatch.player2_name;
+      return `${name} wins · optional score below (empty saves as 0–0 for stats)`;
+    }
+    return inferredWinnerName
+      ? `${inferredWinnerName} wins`
+      : 'Enter complete sets: one set can decide the match, or first to two (best-of-three) / first to three (best-of-five).';
+  }, [matchResultModalMatch, resultMode, concededWinnerId, inferredWinnerName, pidEq]);
+
+  const canSaveResult = useMemo(() => {
+    if (!matchResultModalMatch) return false;
+    if (resultMode === 'conceded') {
+      if (!concededWinnerId) return false;
+      const rows = collectRetirementRowsFromForm(resultSets);
+      if (rows.length === 0) return true;
+      return rows.every((s) =>
+        isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, s.tiebreakPlayer1, s.tiebreakPlayer2)
+      );
+    }
+    return inferredWinnerId != null;
+  }, [matchResultModalMatch, resultMode, concededWinnerId, resultSets, inferredWinnerId]);
 
   const handleAddToMatches = useCallback(
     async (match) => {
@@ -450,9 +597,26 @@ function TournamentDetailScreenInner({ route, navigation }) {
   const participants = data?.participants;
   const isRoundRobin = data?.tournament?.format === 'round_robin';
 
+  /** Bronze / 3rd-place match shares the final round; exclude it from the tree bracket layout. */
+  const { bronzeMatch, matchesForMainBracket } = useMemo(() => {
+    const list = matches || [];
+    if (!list.length) return { bronzeMatch: null, matchesForMainBracket: [] };
+    let maxR = -1;
+    for (const m of list) {
+      const r = typeof m.round === 'number' ? m.round : 0;
+      if (r > maxR) maxR = r;
+    }
+    const bronze = list.find((m) => {
+      const r = typeof m.round === 'number' ? m.round : 0;
+      return r === maxR && (m.match_index_in_round ?? 0) === 1;
+    });
+    const main = bronze ? list.filter((m) => m.id !== bronze.id) : list;
+    return { bronzeMatch: bronze || null, matchesForMainBracket: main };
+  }, [matches]);
+
   const matchesByRound = useMemo(() => {
     const byRound = {};
-    (matches || []).forEach((m) => {
+    (matchesForMainBracket || []).forEach((m) => {
       const r = typeof m.round === 'number' ? m.round : 0;
       if (!byRound[r]) byRound[r] = [];
       byRound[r].push(m);
@@ -462,7 +626,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
       if (Array.isArray(arr)) arr.sort((a, b) => (a.match_index_in_round ?? 0) - (b.match_index_in_round ?? 0));
     });
     return byRound;
-  }, [matches]);
+  }, [matchesForMainBracket]);
 
   const leagueTable = useMemo(() => {
     if (!isRoundRobin || !participants?.length || !matches) return [];
@@ -538,6 +702,51 @@ function TournamentDetailScreenInner({ route, navigation }) {
     .map((r) => parseInt(r, 10))
     .filter((r) => !Number.isNaN(r))
     .sort((a, b) => a - b);
+
+  let bronzeKnockoutSection = null;
+  if (!isRoundRobin && bronzeMatch) {
+    const m = bronzeMatch;
+    const hasWinner = !!m.winner_participant_id;
+    const p1Won = m.winner_participant_id === m.player1_participant_id;
+    const p2Won = m.winner_participant_id === m.player2_participant_id;
+    const bothApp = m.player1_app_id && m.player2_app_id;
+    bronzeKnockoutSection = (
+      <View style={styles.bronzeSection}>
+        <Text style={[styles.bracketTitle, styles.bronzeTitle]}>3rd place</Text>
+        <TouchableOpacity
+          style={[styles.roundRobinMatchCard, hasWinner && styles.bracketMatchCardDone]}
+          onPress={() => openMatchActions(m)}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.bracketPlayer, p1Won && styles.bracketWinner]} numberOfLines={1}>
+            {m.player1_name || 'TBD'}
+          </Text>
+          <Text style={styles.bracketVs}>vs</Text>
+          <Text style={[styles.bracketPlayer, p2Won && styles.bracketWinner]} numberOfLines={1}>
+            {m.player2_name || 'TBD'}
+          </Text>
+          {hasWinner && (
+            <Text style={styles.bracketWinnerLabel} numberOfLines={1}>
+              ✓ {p1Won ? m.player1_name : m.player2_name}
+            </Text>
+          )}
+          {hasWinner && (m.score || m.match_date) && (
+            <Text style={styles.bracketScoreDate} numberOfLines={1}>
+              {[m.score, m.match_date].filter(Boolean).join(' · ')}
+            </Text>
+          )}
+          {bothApp &&
+            (h2hByMatchId[m.id]?.setsWon ?? 0) + (h2hByMatchId[m.id]?.setsLost ?? 0) > 0 && (
+              <Text style={styles.bracketH2h} numberOfLines={1}>
+                Sets: {h2hByMatchId[m.id].setsWon}–{h2hByMatchId[m.id].setsLost}
+              </Text>
+            )}
+          {!hasWinner && <Text style={styles.bracketTapHint}>Tap to enter score</Text>}
+          {m.remark ? <Text style={styles.bracketRemark} numberOfLines={2}>{m.remark}</Text> : null}
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -632,7 +841,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
                                 Sets: {h2hByMatchId[match.id].setsWon}–{h2hByMatchId[match.id].setsLost}
                               </Text>
                             )}
-                          {!hasWinner && <Text style={styles.bracketTapHint}>Tap to set winner</Text>}
+                          {!hasWinner && <Text style={styles.bracketTapHint}>Tap to enter score</Text>}
                           {match.remark ? (
                             <Text style={styles.bracketRemark} numberOfLines={2}>{match.remark}</Text>
                           ) : null}
@@ -653,6 +862,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
                 openMatchActions={openMatchActions}
                 h2hByMatchId={h2hByMatchId}
               />
+              {bronzeKnockoutSection}
             </>
           )}
         </ScrollView>
@@ -696,56 +906,90 @@ function TournamentDetailScreenInner({ route, navigation }) {
             <View style={styles.modalCard}>
               {matchResultModalMatch && (
                 <>
-                  <Text style={styles.modalTitle}>Set match result</Text>
+                  <Text style={styles.modalTitle}>Enter match score</Text>
                   <Text style={styles.modalSubtitle}>
                     {matchResultModalMatch.player1_name || 'TBD'} vs {matchResultModalMatch.player2_name || 'TBD'}
                   </Text>
 
-                  <Text style={styles.inputLabel}>Winner (required)</Text>
-                  <View style={styles.winnerRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.winnerBtn,
-                        resultWinnerId === matchResultModalMatch.player1_participant_id && styles.winnerBtnActive,
-                      ]}
-                      onPress={() => setResultWinnerId(matchResultModalMatch.player1_participant_id)}
-                    >
-                      <Text
-                        style={[
-                          styles.winnerBtnText,
-                          resultWinnerId === matchResultModalMatch.player1_participant_id && styles.winnerBtnTextActive,
-                        ]}
-                        numberOfLines={1}
+                  <Text style={styles.inputLabel}>Result type</Text>
+                  <View style={styles.resultModeRow}>
+                    {[
+                      { key: 'sets', label: 'Normal' },
+                      { key: 'conceded', label: 'Walkover / retirement' },
+                    ].map(({ key, label }) => (
+                      <TouchableOpacity
+                        key={key}
+                        style={[styles.resultModeChip, resultMode === key && styles.resultModeChipActive]}
+                        onPress={() => {
+                          setResultMode(key);
+                          if (key !== 'conceded') setConcededWinnerId(null);
+                        }}
                       >
-                        {matchResultModalMatch.player1_name || 'TBD'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.winnerBtn,
-                        resultWinnerId === matchResultModalMatch.player2_participant_id && styles.winnerBtnActive,
-                      ]}
-                      onPress={() => setResultWinnerId(matchResultModalMatch.player2_participant_id)}
-                    >
-                      <Text
-                        style={[
-                          styles.winnerBtnText,
-                          resultWinnerId === matchResultModalMatch.player2_participant_id && styles.winnerBtnTextActive,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {matchResultModalMatch.player2_name || 'TBD'}
-                      </Text>
-                    </TouchableOpacity>
+                        <Text style={[styles.resultModeChipText, resultMode === key && styles.resultModeChipTextActive]}>{label}</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
 
+                  <Text style={styles.inputLabel}>Outcome</Text>
+                  <Text style={[styles.modalSubtitle, { marginBottom: 10 }]}>{resultSummaryLine}</Text>
+
+                  {resultMode === 'conceded' && (
+                    <>
+                      <Text style={styles.inputLabel}>Match winner</Text>
+                      <View style={styles.resultModeRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.resultModeChip,
+                            pidEq(concededWinnerId, matchResultModalMatch.player1_participant_id) && styles.resultModeChipActive,
+                          ]}
+                          onPress={() => setConcededWinnerId(matchResultModalMatch.player1_participant_id)}
+                        >
+                          <Text
+                            style={[
+                              styles.resultModeChipText,
+                              pidEq(concededWinnerId, matchResultModalMatch.player1_participant_id) && styles.resultModeChipTextActive,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {matchResultModalMatch.player1_name || 'P1'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.resultModeChip,
+                            pidEq(concededWinnerId, matchResultModalMatch.player2_participant_id) && styles.resultModeChipActive,
+                          ]}
+                          onPress={() => setConcededWinnerId(matchResultModalMatch.player2_participant_id)}
+                        >
+                          <Text
+                            style={[
+                              styles.resultModeChipText,
+                              pidEq(concededWinnerId, matchResultModalMatch.player2_participant_id) && styles.resultModeChipTextActive,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {matchResultModalMatch.player2_name || 'P2'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  )}
+
+                  {(resultMode === 'sets' || resultMode === 'conceded') && (
+                    <>
                   <View style={styles.resultSetHeader}>
-                    <Text style={styles.inputLabel}>Set scores (games 0–7)</Text>
+                    <Text style={styles.inputLabel}>
+                      {resultMode === 'conceded' ? 'Score when stopped (optional)' : 'Set scores (games 0–7)'}
+                    </Text>
                     <TouchableOpacity onPress={addResultSet} style={styles.addSetLink}>
                       <Text style={styles.addSetLinkText}>+ Add set</Text>
                     </TouchableOpacity>
                   </View>
-                  <Text style={styles.setHint}>7–6 or 6–7 requires tiebreak. Incomplete sets are saved but not counted in W/L.</Text>
+                  <Text style={styles.setHint}>
+                    {resultMode === 'conceded'
+                      ? 'Leave empty for 0–0 (no play). Or enter partial or full sets; 7–6 / 6–7 needs a tiebreak. Saved as (ret.) for stats.'
+                      : 'One complete valid set can decide the match, or first to two sets (best-of-three), or first to three (best-of-five). 7–6 or 6–7 requires tiebreak.'}
+                  </Text>
                   {resultSets.map((set, i) => {
                     const g1 = set.gamesPlayer1 === '' ? null : parseInt(set.gamesPlayer1, 10);
                     const g2 = set.gamesPlayer2 === '' ? null : parseInt(set.gamesPlayer2, 10);
@@ -809,6 +1053,9 @@ function TournamentDetailScreenInner({ route, navigation }) {
                     );
                   })}
 
+                    </>
+                  )}
+
                   <Text style={styles.inputLabel}>Date</Text>
                   <TextInput
                     style={styles.input}
@@ -823,9 +1070,12 @@ function TournamentDetailScreenInner({ route, navigation }) {
                       <Text style={styles.modalBtnSecondaryText}>Cancel</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.modalBtn, savingResult && styles.modalBtnDisabled]}
+                      style={[
+                        styles.modalBtn,
+                        (savingResult || !canSaveResult) && styles.modalBtnDisabled,
+                      ]}
                       onPress={saveMatchResult}
-                      disabled={savingResult}
+                      disabled={savingResult || !canSaveResult}
                     >
                       <Text style={styles.modalBtnText}>{savingResult ? 'Saving…' : 'Save'}</Text>
                     </TouchableOpacity>
@@ -927,6 +1177,21 @@ const styles = StyleSheet.create({
   addSetLink: { padding: 8 },
   addSetLinkText: { color: '#1a472a', fontWeight: '600', fontSize: 14 },
   setHint: { fontSize: 12, color: '#666', marginBottom: 10 },
+  resultModeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  resultModeChip: {
+    flex: 1,
+    minWidth: '28%',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#f7f7f7',
+    alignItems: 'center',
+  },
+  resultModeChipActive: { borderColor: '#1a472a', backgroundColor: 'rgba(26, 71, 42, 0.12)' },
+  resultModeChipText: { fontSize: 13, color: '#444', fontWeight: '600', textAlign: 'center' },
+  resultModeChipTextActive: { color: '#1a472a' },
   resultSetBlock: { marginBottom: 12 },
   resultSetRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
   resultSetNum: { width: 44, fontSize: 14, color: '#666' },
@@ -957,19 +1222,6 @@ const styles = StyleSheet.create({
   },
   removeSetBtn: { padding: 8 },
   removeSetBtnText: { color: '#c53030', fontSize: 16 },
-  winnerRow: { flexDirection: 'row', gap: 10, marginBottom: 4 },
-  winnerBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#ddd',
-    alignItems: 'center',
-  },
-  winnerBtnActive: { borderColor: '#1a472a', backgroundColor: 'rgba(26,71,42,0.1)' },
-  winnerBtnText: { fontSize: 14, color: '#555', fontWeight: '500' },
-  winnerBtnTextActive: { color: '#1a472a', fontWeight: '700' },
   modalButtons: { flexDirection: 'row', gap: 12, marginTop: 24 },
   modalBtn: { flex: 1, backgroundColor: '#1a472a', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   modalBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
@@ -1002,6 +1254,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.85)',
   },
+  bronzeSection: { marginTop: 4 },
+  bronzeTitle: { marginTop: 16 },
   remarkModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
   remarkModalCard: {
     backgroundColor: '#fff',

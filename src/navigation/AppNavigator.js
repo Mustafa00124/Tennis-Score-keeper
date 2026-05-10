@@ -9,6 +9,9 @@ import MatchDetailScreen from '../screens/MatchDetailScreen';
 import MatchupStatsScreen from '../screens/MatchupStatsScreen';
 import PlayerDetailScreen from '../screens/PlayerDetailScreen';
 import TournamentDetailScreen from '../screens/TournamentDetailScreen';
+import TourDetailScreen from '../screens/TourDetailScreen';
+import TourHistoryScreen from '../screens/TourHistoryScreen';
+import TourStatsScreen from '../screens/TourStatsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -28,7 +31,7 @@ function HeaderTitleWithIcon() {
   return (
     <View style={styles.headerTitleWrap}>
       <Image source={require('../../media/App-Icon.jpg')} style={styles.headerIcon} />
-      <Text style={styles.headerTitleText}>Tennis Statbot</Text>
+      <Text style={styles.headerTitleText}>Pocket Tour</Text>
     </View>
   );
 }
@@ -85,6 +88,21 @@ export default function AppNavigator() {
         name="TournamentDetail"
         component={TournamentDetailScreen}
         options={({ route }) => ({ title: route.params?.tournamentName ?? 'Tournament' })}
+      />
+      <Stack.Screen
+        name="TourDetail"
+        component={TourDetailScreen}
+        options={({ route }) => ({ title: route.params?.tourName ?? 'Tour' })}
+      />
+      <Stack.Screen
+        name="TourHistory"
+        component={TourHistoryScreen}
+        options={({ route }) => ({ title: route.params?.tourName ? `${route.params.tourName} · History` : 'Past tournaments' })}
+      />
+      <Stack.Screen
+        name="TourStats"
+        component={TourStatsScreen}
+        options={{ title: 'Tour stats' }}
       />
     </Stack.Navigator>
   );
