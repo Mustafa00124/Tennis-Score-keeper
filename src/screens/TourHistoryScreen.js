@@ -26,7 +26,6 @@ import {
 } from '../utils/tourCalendar';
 
 function eventTypeLabel(ev) {
-  if (ev.event_type === '400') return 'Grand Slam';
   return TOUR_EVENT_TYPES[ev.event_type]?.label || ev.event_type;
 }
 
@@ -40,6 +39,7 @@ function eventCalendarCaption(ev) {
 
 function eventBracketSpecs(ev) {
   const d = ev.draw_size ?? 8;
+  if (ev.event_type === 'tourfinals') return 'Top 2 ranked players · full-set final';
   const m = ev.match_mode === 'random' ? 'Random pairings' : 'Seeded by tour ranking';
   return `${d}-player draw · ${m}`;
 }

@@ -1,17 +1,17 @@
 {
   "expo": {
-    "icon": "./media/App-Icon.jpg",
-    "name": "Pocket Tour",
+    "icon": "./media/App-Icon.png",
+    "name": "Pocket Tour 2",
     "slug": "tennis-scorekeeper",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.pockettour.tennisscorekeeper"
+      "bundleIdentifier": "com.pockettour2.tennisscorekeeper"
     },
     "android": {
-      "package": "com.pockettour.tennisscorekeeper"
+      "package": "com.pockettour2.tennisscorekeeper"
     },
     "plugins": [
       "expo-asset",
@@ -19,7 +19,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Pocket Tour to access your photos to add images to players, matches, and tournaments.",
+          "photosPermission": "Allow Pocket Tour 2 to access your photos to add images to players, matches, and tournaments.",
           "cameraPermission": false,
           "microphonePermission": false
         }

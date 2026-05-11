@@ -4,12 +4,26 @@
  * Incomplete set = not a finished set (e.g. 3-2), not counted in W/L.
  */
 
-/** Games in a set must be 0–7. */
-export function gamesInValidRange(g1, g2) {
+function normalizeSetGameTarget(options = {}) {
+  const raw = typeof options === 'number' ? options : options.setGameTarget;
+  const target = parseInt(raw, 10);
+  return target === 4 ? 4 : 6;
+}
+
+function normalizeSetsToWin(options = {}) {
+  const raw = typeof options === 'object' ? options.setsToWin : null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Games in a set must fit the selected set format. */
+export function gamesInValidRange(g1, g2, options = {}) {
   const a = Number(g1);
   const b = Number(g2);
+  const target = normalizeSetGameTarget(options);
+  const maxGames = target === 4 ? 4 : 7;
   if (!Number.isInteger(a) || !Number.isInteger(b)) return false;
-  return a >= 0 && a <= 7 && b >= 0 && b <= 7;
+  return a >= 0 && a <= maxGames && b >= 0 && b <= maxGames;
 }
 
 /** Tiebreak: one player >= 7 and leading by at least 2. (internal) */
@@ -22,49 +36,52 @@ function isTiebreakValid(tb1, tb2) {
   return max >= 7 && max - min >= 2;
 }
 
-/** Set score 7-6 or 6-7 requires a tiebreak to be complete. */
-export function setNeedsTiebreak(g1, g2) {
+/** Deciding-game set scores require a tiebreak to be complete. */
+export function setNeedsTiebreak(g1, g2, options = {}) {
   const a = Number(g1);
   const b = Number(g2);
-  return (a === 7 && b === 6) || (a === 6 && b === 7);
+  const target = normalizeSetGameTarget(options);
+  if (target === 4) return (a === 4 && b === 3) || (a === 3 && b === 4);
+  return (a === target + 1 && b === target) || (a === target && b === target + 1);
 }
 
 /** Valid completed set scores (without tiebreak): 6-0,6-1,6-2,6-3,6-4,7-5 (and reversed). */
-const VALID_COMPLETED_NO_TB = [
-  [6, 0], [6, 1], [6, 2], [6, 3], [6, 4], [7, 5],
-  [0, 6], [1, 6], [2, 6], [3, 6], [4, 6], [5, 7],
-];
-
-function isCompletedSetNoTiebreak(g1, g2) {
+function isCompletedSetNoTiebreak(g1, g2, options = {}) {
   const a = Number(g1);
   const b = Number(g2);
-  return VALID_COMPLETED_NO_TB.some(([x, y]) => x === a && y === b);
+  const target = normalizeSetGameTarget(options);
+  const max = Math.max(a, b);
+  const min = Math.min(a, b);
+  if (target === 4) return max === 4 && min <= 2;
+  if (max === target && min <= target - 2) return true;
+  if (max === target + 1 && min === target - 1) return true;
+  return false;
 }
 
 /**
  * True if this set is a complete, valid tennis set (counts for W/L).
  * If 7-6 or 6-7, tiebreak must be provided and valid.
  */
-export function isSetComplete(games1, games2, tiebreak1, tiebreak2) {
+export function isSetComplete(games1, games2, tiebreak1, tiebreak2, options = {}) {
   const g1 = Number(games1);
   const g2 = Number(games2);
-  if (!gamesInValidRange(g1, g2)) return false;
-  if (setNeedsTiebreak(g1, g2)) {
+  if (!gamesInValidRange(g1, g2, options)) return false;
+  if (setNeedsTiebreak(g1, g2, options)) {
     const tb1 = tiebreak1 != null && tiebreak1 !== '' ? Number(tiebreak1) : null;
     const tb2 = tiebreak2 != null && tiebreak2 !== '' ? Number(tiebreak2) : null;
     if (tb1 == null || tb2 == null) return false;
     return isTiebreakValid(tb1, tb2);
   }
-  return isCompletedSetNoTiebreak(g1, g2);
+  return isCompletedSetNoTiebreak(g1, g2, options);
 }
 
 /**
  * Display string for a completed set in matchup order (p1 vs p2), including tiebreak when 7–6 / 6–7.
  */
-export function formatSetScoreDisplay(p1Games, p2Games, tiebreakP1, tiebreakP2) {
+export function formatSetScoreDisplay(p1Games, p2Games, tiebreakP1, tiebreakP2, options = {}) {
   const a = Number(p1Games);
   const b = Number(p2Games);
-  if (setNeedsTiebreak(a, b)) {
+  if (setNeedsTiebreak(a, b, options)) {
     const tb1 = tiebreakP1 != null && tiebreakP1 !== '' ? Number(tiebreakP1) : NaN;
     const tb2 = tiebreakP2 != null && tiebreakP2 !== '' ? Number(tiebreakP2) : NaN;
     if (Number.isFinite(tb1) && Number.isFinite(tb2)) {
@@ -75,12 +92,12 @@ export function formatSetScoreDisplay(p1Games, p2Games, tiebreakP1, tiebreakP2) 
 }
 
 /** For UI: can we save this set? Games 0-7 only; if 7-6 or 6-7 need valid tiebreak. Incomplete sets (e.g. 3-2) are allowed. */
-export function isSetValidForSave(games1, games2, tiebreak1, tiebreak2) {
+export function isSetValidForSave(games1, games2, tiebreak1, tiebreak2, options = {}) {
   const g1 = games1 === '' ? null : parseInt(games1, 10);
   const g2 = games2 === '' ? null : parseInt(games2, 10);
   if (g1 == null || g2 == null || !Number.isInteger(g1) || !Number.isInteger(g2)) return false;
-  if (!gamesInValidRange(g1, g2)) return false;
-  if (setNeedsTiebreak(g1, g2)) {
+  if (!gamesInValidRange(g1, g2, options)) return false;
+  if (setNeedsTiebreak(g1, g2, options)) {
     const tb1 = tiebreak1 === '' ? null : parseInt(tiebreak1, 10);
     const tb2 = tiebreak2 === '' ? null : parseInt(tiebreak2, 10);
     return isTiebreakValid(tb1 ?? 0, tb2 ?? 0);
@@ -131,7 +148,7 @@ export function parseTournamentScoreAggregateFromBracketString(scoreStr) {
     }
     gamesLeft += g1;
     gamesRight += g2;
-    if (isSetComplete(g1, g2, tb1, tb2)) {
+    if (isSetComplete(g1, g2, tb1, tb2) || isSetComplete(g1, g2, tb1, tb2, { setGameTarget: 4 })) {
       if (g1 > g2) setsLeft++;
       else if (g2 > g1) setsRight++;
     }
@@ -170,7 +187,7 @@ export function parseBracketScoreSegments(scoreStr) {
     } else {
       continue;
     }
-    const complete = isSetComplete(g1, g2, tb1, tb2);
+    const complete = isSetComplete(g1, g2, tb1, tb2) || isSetComplete(g1, g2, tb1, tb2, { setGameTarget: 4 });
     out.push({ g1, g2, tb1, tb2, complete });
   }
   return out;
@@ -258,7 +275,7 @@ export function computeTourBracketPairDetailedStats(meetings) {
       gamesPlayer1 += p1Games;
       gamesPlayer2 += p2Games;
       const margin = Math.abs(p1Games - p2Games);
-      const scoreStr = formatSetScoreDisplay(p1Games, p2Games, tbP1, tbP2);
+      const scoreStr = formatSetScoreDisplay(p1Games, p2Games, tbP1, tbP2, { setGameTarget: seg.g1 <= 4 && seg.g2 <= 4 ? 4 : 6 });
       if ((g1 === 7 && g2 === 6) || (g1 === 6 && g2 === 7)) tieBreaksPlayed++;
       if (p1Games === 6 && p2Games === 0) bagelsServedPlayer1++;
       if (p2Games === 6 && p1Games === 0) bagelsServedPlayer2++;
@@ -347,7 +364,7 @@ export function computeTourBracketPairDetailedStats(meetings) {
  * best-of-3 (first to 2), best-of-5 (first to 3).
  * Participant ids are normalized with Number() so SQLite/web string vs number never blocks inference.
  */
-export function inferMatchWinnerParticipantFromSetRows(resultSets, participantId1, participantId2) {
+export function inferMatchWinnerParticipantFromSetRows(resultSets, participantId1, participantId2, options = {}) {
   if (participantId1 == null || participantId2 == null) return null;
   const id1 = Number(participantId1);
   const id2 = Number(participantId2);
@@ -360,12 +377,18 @@ export function inferMatchWinnerParticipantFromSetRows(resultSets, participantId
     if (g1 == null || g2 == null || !Number.isInteger(g1) || !Number.isInteger(g2)) continue;
     const tb1 = row.tiebreakPlayer1 === '' ? undefined : row.tiebreakPlayer1;
     const tb2 = row.tiebreakPlayer2 === '' ? undefined : row.tiebreakPlayer2;
-    if (!isSetComplete(g1, g2, tb1, tb2)) continue;
+    if (!isSetComplete(g1, g2, tb1, tb2, options)) continue;
     if (g1 > g2) setsWon1++;
     else if (g2 > g1) setsWon2++;
   }
   const total = setsWon1 + setsWon2;
   if (total === 0) return null;
+  const requiredSets = normalizeSetsToWin(options);
+  if (requiredSets != null) {
+    if (setsWon1 >= requiredSets) return id1;
+    if (setsWon2 >= requiredSets) return id2;
+    return null;
+  }
   if (total === 1) {
     if (setsWon1 === 1) return id1;
     if (setsWon2 === 1) return id2;

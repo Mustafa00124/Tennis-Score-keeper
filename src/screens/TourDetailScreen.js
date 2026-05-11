@@ -33,7 +33,6 @@ import { TOUR_CALENDAR_COLORS, formatShortDate, parseDateStr } from '../utils/to
 import { knockoutDrawSizesAllowed, clampDrawSizeToParticipants } from '../utils/tourDrawSizes';
 
 function eventTypeLabel(ev) {
-  if (ev.event_type === '400') return 'Grand Slam';
   return TOUR_EVENT_TYPES[ev.event_type]?.label || ev.event_type;
 }
 
@@ -47,8 +46,14 @@ function eventCalendarCaption(ev) {
 
 function eventBracketSpecs(ev) {
   const d = ev.draw_size ?? 8;
+  if (ev.event_type === 'tourfinals') return 'Top 2 ranked players · full-set final';
   const m = ev.match_mode === 'random' ? 'Random pairings' : 'Seeded by tour ranking';
   return `${d}-player draw · ${m}`;
+}
+
+function requiredEventDrawSize(ev, rosterCount) {
+  if (ev?.event_type === 'tourfinals') return 2;
+  return clampDrawSizeToParticipants(ev?.draw_size ?? 8, rosterCount);
 }
 
 const SPARKLINE_COLORS = ['#00e676', '#40c4ff', '#ffab40', '#ea80fc', '#ffee58'];
@@ -138,6 +143,7 @@ export default function TourDetailScreen({ route, navigation }) {
   const [data, setData] = useState(null);
   const [rankings, setRankings] = useState([]);
   const [startModal, setStartModal] = useState(null);
+  const [startPlayerIds, setStartPlayerIds] = useState(() => new Set());
   const [editDesc, setEditDesc] = useState(false);
   const [descDraft, setDescDraft] = useState('');
   const [scheduleEditEvent, setScheduleEditEvent] = useState(null);
@@ -204,6 +210,10 @@ export default function TourDetailScreen({ route, navigation }) {
     }
   };
 
+  const participants = data?.participants ?? [];
+  const events = data?.events ?? [];
+  const seasons = data?.seasons ?? [];
+
   const runStartTournament = async () => {
     if (!startModal) return;
     const name = startModal.name;
@@ -213,15 +223,25 @@ export default function TourDetailScreen({ route, navigation }) {
       Alert.alert('Players', 'Add at least two players to this tour before starting a tournament.');
       return;
     }
-    const size =
-      clampDrawSizeToParticipants(startModal.draw_size ?? 8, rosterCount) ?? allowed[allowed.length - 1];
+    const size = requiredEventDrawSize(startModal, rosterCount);
     if (size == null) {
       Alert.alert('Draw size', 'Could not determine a valid draw for this roster.');
       return;
     }
+    if (startModal.event_type !== 'tourfinals' && startPlayerIds.size !== size) {
+      Alert.alert(
+        'Participants',
+        `This is a ${size}-player tournament. You selected ${startPlayerIds.size}. Select exactly ${size} players to create the draw.`
+      );
+      return;
+    }
     try {
-      const { tournamentId } = await startTourEventBracket(startModal.id, { drawSize: size });
+      const { tournamentId } = await startTourEventBracket(startModal.id, {
+        drawSize: size,
+        participantPlayerIds: Array.from(startPlayerIds),
+      });
       setStartModal(null);
+      setStartPlayerIds(new Set());
       await load();
       navigation.navigate('TournamentDetail', {
         tournamentId,
@@ -231,6 +251,18 @@ export default function TourDetailScreen({ route, navigation }) {
       Alert.alert('Error', e?.message || 'Could not start tournament');
     }
   };
+
+  const openStartTournament = useCallback(
+    (ev) => {
+      const roster = participants.length;
+      const targetSize = requiredEventDrawSize(ev, roster);
+      const byRank = rankings.map((r) => r.player_id);
+      const initial = byRank.slice(0, targetSize || 0);
+      setStartPlayerIds(new Set(initial));
+      setStartModal(ev);
+    },
+    [participants.length, rankings]
+  );
 
   const openScheduleEdit = useCallback((ev) => {
     setScheduleEditEvent(ev);
@@ -268,9 +300,6 @@ export default function TourDetailScreen({ route, navigation }) {
   }
 
   const tour = data?.tour;
-  const participants = data?.participants ?? [];
-  const events = data?.events ?? [];
-  const seasons = data?.seasons ?? [];
   const displaySeasonId = useMemo(
     () => pickDisplaySeasonId(seasons, events),
     [seasons, events]
@@ -289,6 +318,10 @@ export default function TourDetailScreen({ route, navigation }) {
     () => [...seasonEvents].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id),
     [seasonEvents]
   );
+  const startRequiredDrawSize = requiredEventDrawSize(startModal, participants.length);
+  const startSelectionCount = startModal?.event_type === 'tourfinals' ? Math.min(2, rankings.length) : startPlayerIds.size;
+  const startSelectionOk =
+    !startModal || startModal.event_type === 'tourfinals' || startSelectionCount === startRequiredDrawSize;
   return (
     <ImageBackground source={require('../../media/Tournament.jpg')} style={styles.bg} resizeMode="cover">
       <View style={styles.overlay} />
@@ -475,7 +508,7 @@ export default function TourDetailScreen({ route, navigation }) {
                               );
                               return;
                             }
-                            setStartModal(ev);
+                            openStartTournament(ev);
                           }}
                         >
                           <Text style={styles.startBtnText}>Start tournament</Text>
@@ -591,7 +624,44 @@ export default function TourDetailScreen({ route, navigation }) {
                 ? 'Need at least 2 players on the tour.'
                 : `Using the ${clampDrawSizeToParticipants(startModal?.draw_size ?? 8, participants.length) ?? '—'}-player draw from this event’s schedule (capped by your ${participants.length}-player roster).`}
             </Text>
-            <TouchableOpacity style={styles.primaryBtn} onPress={runStartTournament}>
+            {startModal?.event_type === 'tourfinals' ? (
+              <View style={{ marginTop: 8 }}>
+                <Text style={styles.modalHint}>Tour Finals automatically uses the current top two ranked players.</Text>
+                {rankings.slice(0, 2).map((r, idx) => (
+                  <View key={r.player_id} style={styles.participantRow}>
+                    <Text style={styles.participantName}>#{idx + 1} {r.player_name}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 190, marginTop: 8 }} nestedScrollEnabled>
+                {participants.map((p) => {
+                  const on = startPlayerIds.has(p.player_id);
+                  return (
+                    <TouchableOpacity
+                      key={p.player_id}
+                      style={[styles.playerPickRow, on && styles.playerPickRowOn]}
+                      onPress={() => {
+                        setStartPlayerIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.player_id)) next.delete(p.player_id);
+                          else next.add(p.player_id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <Text style={styles.playerPickText}>{on ? '✓ ' : ''}{p.player_name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+            {startModal?.event_type !== 'tourfinals' && !startSelectionOk ? (
+              <Text style={styles.selectionWarning}>
+                Selected {startSelectionCount}; select exactly {startRequiredDrawSize} to create this tournament.
+              </Text>
+            ) : null}
+            <TouchableOpacity style={[styles.primaryBtn, !startSelectionOk && styles.primaryBtnDisabled]} onPress={runStartTournament}>
               <Text style={styles.primaryBtnText}>Create draw & open</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.modalClose} onPress={() => setStartModal(null)}>
@@ -664,6 +734,20 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255,255,255,0.28)',
   },
   participantName: { color: '#fff', fontSize: 16 },
+  playerPickRow: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 8,
+  },
+  playerPickRowOn: {
+    backgroundColor: 'rgba(127,217,154,0.22)',
+    borderColor: 'rgba(127,217,154,0.8)',
+  },
+  playerPickText: { color: '#fff', fontWeight: '700' },
   primaryBtn: {
     backgroundColor: '#2d6a4f',
     paddingVertical: 12,
@@ -671,7 +755,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  primaryBtnDisabled: { opacity: 0.62 },
   primaryBtnText: { color: '#fff', fontWeight: '700' },
+  selectionWarning: {
+    color: '#ffd166',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 8,
+    marginBottom: 2,
+  },
   startBtn: {
     marginTop: 10,
     alignSelf: 'flex-start',

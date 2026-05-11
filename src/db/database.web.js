@@ -825,6 +825,8 @@ export async function createTournament(name, drawSize, opts = {}) {
   const description = (opts.description || '').trim() || null;
   const remarks = (opts.remarks || '').trim() || null;
   const images = Array.isArray(opts.images) ? opts.images : null;
+  const match_set_target = parseInt(opts.matchSetTarget, 10) === 4 ? 4 : 6;
+  const match_sets_to_win = parseInt(opts.matchSetsToWin, 10) || null;
   list.push({
     id,
     name: trimmed,
@@ -835,6 +837,8 @@ export async function createTournament(name, drawSize, opts = {}) {
     description: description || null,
     remarks: remarks || null,
     images: images || null,
+    match_set_target,
+    match_sets_to_win,
     created_at: new Date().toISOString(),
   });
   saveTournaments(list);
@@ -1033,9 +1037,19 @@ function ensureTourEventsCalendarDefaults(raw) {
 function ensureTourEventsBracketFields(raw) {
   let dirty = false;
   for (const e of raw) {
+    const etype = normalizeTourEventType(e.event_type);
+    if (e.event_type !== etype) {
+      e.event_type = etype;
+      dirty = true;
+    }
+    const preset = getTourEventPreset(e.event_type);
     const ds = parseInt(e.draw_size, 10);
     if (e.draw_size == null || !isValidDrawSize(ds)) {
-      e.draw_size = 8;
+      e.draw_size = preset.drawSize ?? 8;
+      dirty = true;
+    }
+    if (e.event_type === 'tourfinals' && e.draw_size !== 2) {
+      e.draw_size = 2;
       dirty = true;
     }
     if (e.match_mode !== 'random' && e.match_mode !== 'seeds') {
@@ -1422,9 +1436,18 @@ export async function deleteTournament(tournamentId) {
 
 // --- Tours (same API as database.native.js) ---
 export const TOUR_EVENT_TYPES = {
-  '200': { winnerPoints: 200, label: 'Tour 200' },
-  grandslam: { winnerPoints: 400, label: 'Grand Slam' },
+  '200': { winnerPoints: 200, finalistPoints: 100, label: 'Tour 200', matchSetTarget: 4 },
+  grandslam: { winnerPoints: 400, finalistPoints: 200, label: 'Grand Slam', matchSetTarget: 6 },
+  tourfinals: { winnerPoints: 200, finalistPoints: 0, label: 'Tour Finals', drawSize: 2, matchSetTarget: 6, matchSetsToWin: 2 },
 };
+
+function normalizeTourEventType(value) {
+  return value === 'grandslam' || value === 'tourfinals' ? value : '200';
+}
+
+function getTourEventPreset(value) {
+  return TOUR_EVENT_TYPES[normalizeTourEventType(value)] ?? TOUR_EVENT_TYPES['200'];
+}
 
 export async function getAllTours() {
   const evs = loadTourEvents();
@@ -1477,13 +1500,14 @@ export async function createTour(name, opts = {}) {
   sched.forEach((row) => {
     const ename = (row.name || '').trim();
     if (!ename) return;
-    const etype = row.eventType === 'grandslam' ? 'grandslam' : '200';
-    const wp = TOUR_EVENT_TYPES[etype]?.winnerPoints ?? 200;
+    const etype = normalizeTourEventType(row.eventType);
+    const preset = getTourEventPreset(etype);
+    const wp = preset.winnerPoints;
     maxEid += 1;
     const scheduled_date = toDateStr(addDays(weekStart, eventIndex * 7));
     const calendar_color = TOUR_CALENDAR_COLORS[eventIndex % TOUR_CALENDAR_COLORS.length];
-    const draw_size = normalizeTourEventDrawSize(row.drawSize);
-    const match_mode = row.matchMode === 'random' ? 'random' : 'seeds';
+    const draw_size = etype === 'tourfinals' ? 2 : normalizeTourEventDrawSize(row.drawSize);
+    const match_mode = row.matchMode === 'random' && etype !== 'tourfinals' ? 'random' : 'seeds';
     evList.push({
       id: maxEid,
       tour_id: id,
@@ -1491,7 +1515,7 @@ export async function createTour(name, opts = {}) {
       name: ename,
       event_type: etype,
       winner_points: wp,
-      finalist_points: wp / 2,
+      finalist_points: preset.finalistPoints ?? wp / 2,
       linked_tournament_id: null,
       status: 'scheduled',
       completed_at: null,
@@ -1514,10 +1538,11 @@ export async function addScheduledTourEvent(tourId, opts = {}) {
   if (!tour) throw new Error('Tour not found');
   const trimmed = (opts.name || '').trim();
   if (!trimmed) throw new Error('Event name is required');
-  const etype = opts.eventType === 'grandslam' ? 'grandslam' : '200';
-  const wp = TOUR_EVENT_TYPES[etype]?.winnerPoints ?? 200;
-  const draw_size = normalizeTourEventDrawSize(opts.drawSize);
-  const match_mode = opts.matchMode === 'random' ? 'random' : 'seeds';
+  const etype = normalizeTourEventType(opts.eventType);
+  const preset = getTourEventPreset(etype);
+  const wp = preset.winnerPoints;
+  const draw_size = etype === 'tourfinals' ? 2 : normalizeTourEventDrawSize(opts.drawSize);
+  const match_mode = opts.matchMode === 'random' && etype !== 'tourfinals' ? 'random' : 'seeds';
 
   const seasonId = resolveSeasonIdForNewEventWeb(tourId);
   let evList = loadTourEvents();
@@ -1551,7 +1576,7 @@ export async function addScheduledTourEvent(tourId, opts = {}) {
     name: trimmed,
     event_type: etype,
     winner_points: wp,
-    finalist_points: wp / 2,
+    finalist_points: preset.finalistPoints ?? wp / 2,
     linked_tournament_id: null,
     status: 'scheduled',
     completed_at: null,
@@ -1630,7 +1655,7 @@ export async function updateTourEvent(tourEventId, updates = {}) {
   saveTourEvents(evList);
 }
 
-export async function startTourEventBracket(tourEventId, { drawSize: drawSizeOverride } = {}) {
+export async function startTourEventBracket(tourEventId, { drawSize: drawSizeOverride, participantPlayerIds } = {}) {
   const evList = loadTourEvents();
   const ev = evList.find((e) => e.id === tourEventId);
   if (!ev) throw new Error('Event not found');
@@ -1652,27 +1677,48 @@ export async function startTourEventBracket(tourEventId, { drawSize: drawSizeOve
   }
   const tour = await getTourById(ev.tour_id);
   if (!tour) throw new Error('Tour not found');
-  const size = normalizeTourEventDrawSize(drawSizeOverride ?? ev.draw_size ?? 8);
-  if (!isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
-
+  const etype = normalizeTourEventType(ev.event_type);
+  const preset = getTourEventPreset(etype);
   const rankings = await getTourRankings(ev.tour_id);
   const rankOrder = rankings.map((r) => r.player_id);
-  if (rankOrder.length < size) {
+  const tourPlayerIds = new Set(loadTourParticipants().filter((p) => p.tour_id === ev.tour_id).map((p) => p.player_id));
+  let selectedPlayerIds;
+  if (etype === 'tourfinals') {
+    selectedPlayerIds = rankOrder.slice(0, 2);
+  } else if (Array.isArray(participantPlayerIds) && participantPlayerIds.length > 0) {
+    const seen = new Set();
+    selectedPlayerIds = participantPlayerIds
+      .map((id) => parseInt(id, 10))
+      .filter((id) => Number.isFinite(id) && tourPlayerIds.has(id) && !seen.has(id) && seen.add(id));
+  } else {
+    selectedPlayerIds = rankOrder.slice(0, normalizeTourEventDrawSize(drawSizeOverride ?? ev.draw_size ?? 8));
+  }
+  const size = etype === 'tourfinals' ? 2 : normalizeTourEventDrawSize(drawSizeOverride ?? selectedPlayerIds.length ?? ev.draw_size ?? 8);
+  if (!isValidDrawSize(size)) throw new Error('Draw size must be 2, 4, 8, 16, 32, or 64');
+  if (selectedPlayerIds.length !== size) {
     throw new Error(
-      `Need at least ${size} players on this tour for a ${size}-player draw (there are ${rankOrder.length}).`
+      etype === 'tourfinals'
+        ? 'Tour Finals needs the top two ranked tour players.'
+        : `Select exactly ${size} players for this ${size}-player draw.`
     );
   }
 
-  const tid = await createTournament(`${tour.name} — ${ev.name}`, size);
+  const tid = await createTournament(`${tour.name} — ${ev.name}`, size, {
+    matchSetTarget: preset.matchSetTarget,
+    matchSetsToWin: preset.matchSetsToWin,
+  });
   ev.linked_tournament_id = tid;
   ev.status = 'ongoing';
   saveTourEvents(evList);
 
   const nameByPlayerId = Object.fromEntries(rankings.map((r) => [r.player_id, r.player_name]));
-  const topPlayerIds = rankOrder.slice(0, size);
+  const rankIndex = Object.fromEntries(rankOrder.map((id, idx) => [id, idx]));
+  const selectedBySeed = selectedPlayerIds
+    .slice()
+    .sort((a, b) => (rankIndex[a] ?? 999999) - (rankIndex[b] ?? 999999));
   const tpIds = [];
   for (let s = 0; s < size; s++) {
-    const pid = topPlayerIds[s];
+    const pid = selectedBySeed[s];
     const nm = nameByPlayerId[pid] || 'Player';
     const tpid = await addTournamentParticipant(tid, { playerId: pid, displayName: nm }, s);
     tpIds.push(tpid);
@@ -1692,15 +1738,19 @@ export async function createTourEvent(tourId, { name, eventType = '200', winnerP
   if (!tour) throw new Error('Tour not found');
   const trimmed = (name || '').trim();
   if (!trimmed) throw new Error('Event name is required');
+  const etype = normalizeTourEventType(eventType);
+  const preset = getTourEventPreset(etype);
   let wp = parseFloat(winnerPoints);
   if (!Number.isFinite(wp) || wp <= 0) {
-    const preset = TOUR_EVENT_TYPES[eventType];
     wp = preset ? preset.winnerPoints : 200;
   }
-  const fp = wp / 2;
-  const size = parseInt(drawSize, 10) || 8;
+  const fp = preset.finalistPoints ?? wp / 2;
+  const size = etype === 'tourfinals' ? 2 : (parseInt(drawSize, 10) || 8);
   const tName = `${tour.name} — ${trimmed}`;
-  const tid = await createTournament(tName, size);
+  const tid = await createTournament(tName, size, {
+    matchSetTarget: preset.matchSetTarget,
+    matchSetsToWin: preset.matchSetsToWin,
+  });
   const evList = loadTourEvents();
   const seasonId = resolveSeasonIdForNewEventWeb(tourId);
   const sameSeason = evList.filter((e) => e.tour_id === tourId && e.season_id === seasonId);
@@ -1721,7 +1771,7 @@ export async function createTourEvent(tourId, { name, eventType = '200', winnerP
     tour_id: tourId,
     season_id: seasonId,
     name: trimmed,
-    event_type: String(eventType),
+    event_type: etype,
     winner_points: wp,
     finalist_points: fp,
     linked_tournament_id: tid,

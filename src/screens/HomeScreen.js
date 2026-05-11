@@ -371,7 +371,9 @@ export default function HomeScreen({ navigation }) {
     if (createdTourId == null) return;
     if (addedTournamentNames.length >= plannedEventCount) return;
     const allowed = knockoutDrawSizesAllowed(newTourPlayerIds.size);
-    if (allowed.length === 0 || !allowed.includes(eventDraft.drawSize)) {
+    const eventType = eventDraft.eventType === 'tourfinals' ? 'tourfinals' : eventDraft.eventType;
+    const draftDrawSize = eventType === 'tourfinals' ? 2 : eventDraft.drawSize;
+    if (allowed.length === 0 || !allowed.includes(draftDrawSize)) {
       Alert.alert('Draw size', 'Choose a draw size no larger than the number of players on this tour.');
       return;
     }
@@ -390,9 +392,9 @@ export default function HomeScreen({ navigation }) {
     try {
       await addScheduledTourEvent(createdTourId, {
         name: n,
-        eventType: eventDraft.eventType,
-        drawSize: eventDraft.drawSize,
-        matchMode: eventDraft.matchMode,
+        eventType,
+        drawSize: draftDrawSize,
+        matchMode: eventType === 'tourfinals' ? 'seeds' : eventDraft.matchMode,
         scheduleStartDate: addedTournamentNames.length === 0 ? firstTournamentDate : undefined,
       });
       setAddedTournamentNames((prev) => [...prev, n]);
@@ -1024,11 +1026,18 @@ export default function HomeScreen({ navigation }) {
                         onChangeText={(t) => setEventDraft((d) => ({ ...d, name: t }))}
                       />
                       <View style={styles.scheduleTypeCol}>
-                        {['200', 'grandslam'].map((k) => (
+                        {['200', 'grandslam', 'tourfinals'].map((k) => (
                           <TouchableOpacity
                             key={k}
                             style={[styles.typeChipMini, eventDraft.eventType === k && styles.typeChipMiniOn]}
-                            onPress={() => setEventDraft((d) => ({ ...d, eventType: k }))}
+                            onPress={() =>
+                              setEventDraft((d) => ({
+                                ...d,
+                                eventType: k,
+                                drawSize: k === 'tourfinals' ? 2 : d.drawSize,
+                                matchMode: k === 'tourfinals' ? 'seeds' : d.matchMode,
+                              }))
+                            }
                           >
                             <Text style={[styles.typeChipMiniText, eventDraft.eventType === k && styles.typeChipMiniTextOn]}>
                               {TOUR_EVENT_TYPES[k]?.label ?? k}
@@ -1039,7 +1048,11 @@ export default function HomeScreen({ navigation }) {
                     </View>
                     <View style={styles.scheduleSubRow}>
                       <Text style={styles.scheduleSubLabel}>Draw</Text>
-                      {allowedDrawSizesWizard.length === 0 ? (
+                      {eventDraft.eventType === 'tourfinals' ? (
+                        <TouchableOpacity style={[styles.drawChip, styles.drawChipOn]} disabled>
+                          <Text style={[styles.drawChipText, styles.drawChipTextOn]}>2</Text>
+                        </TouchableOpacity>
+                      ) : allowedDrawSizesWizard.length === 0 ? (
                         <Text style={styles.modalHintSmall}>Need at least 2 players on the tour.</Text>
                       ) : (
                         allowedDrawSizesWizard.map((n) => (
@@ -1062,6 +1075,7 @@ export default function HomeScreen({ navigation }) {
                         <TouchableOpacity
                           key={key}
                           style={[styles.modeChip, eventDraft.matchMode === key && styles.modeChipOn]}
+                          disabled={eventDraft.eventType === 'tourfinals'}
                           onPress={() => setEventDraft((d) => ({ ...d, matchMode: key }))}
                         >
                           <Text style={[styles.modeChipText, eventDraft.matchMode === key && styles.modeChipTextOn]}>{label}</Text>

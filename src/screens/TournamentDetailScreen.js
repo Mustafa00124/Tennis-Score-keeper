@@ -47,6 +47,20 @@ function collectRetirementRowsFromForm(resultSets) {
   return out;
 }
 
+function tournamentScoringOptions(tournament) {
+  return {
+    setGameTarget: parseInt(tournament?.match_set_target, 10) === 4 ? 4 : 6,
+    setsToWin: parseInt(tournament?.match_sets_to_win, 10) || null,
+  };
+}
+
+function scoringDescription(tournament) {
+  const opts = tournamentScoringOptions(tournament);
+  const setLabel = opts.setGameTarget === 4 ? 'short sets to 4 games' : 'full sets to 6 games';
+  if (opts.setsToWin) return `${opts.setsToWin} full sets required · ${setLabel}`;
+  return opts.setGameTarget === 4 ? 'Short sets: first to 4 games' : 'Full sets: first to 6 games';
+}
+
 /** Catches render errors and shows a message instead of blank */
 class TournamentDetailErrorBoundary extends React.Component {
   state = { hasError: false, error: null };
@@ -352,11 +366,12 @@ function TournamentDetailScreenInner({ route, navigation }) {
       next[index] = { ...next[index], [field]: value };
       if (field === 'gamesPlayer1' || field === 'gamesPlayer2') {
         const g = parseInt(value, 10);
-        if (Number.isInteger(g) && g > 7) next[index][field] = '7';
+        const maxGames = tournamentScoringOptions(data?.tournament).setGameTarget === 4 ? 4 : 7;
+        if (Number.isInteger(g) && g > maxGames) next[index][field] = String(maxGames);
       }
       return next;
     });
-  }, []);
+  }, [data?.tournament]);
 
   const getValidResultSets = useCallback(() => {
     return resultSets
@@ -364,13 +379,13 @@ function TournamentDetailScreenInner({ route, navigation }) {
         const a = s.gamesPlayer1 === '' ? null : parseInt(s.gamesPlayer1, 10);
         const b = s.gamesPlayer2 === '' ? null : parseInt(s.gamesPlayer2, 10);
         if (a == null || b == null || !Number.isInteger(a) || !Number.isInteger(b)) return null;
-        if (!gamesInValidRange(a, b)) return null;
+        if (!gamesInValidRange(a, b, tournamentScoringOptions(data?.tournament))) return null;
         const tb1 = s.tiebreakPlayer1 === '' ? undefined : s.tiebreakPlayer1;
         const tb2 = s.tiebreakPlayer2 === '' ? undefined : s.tiebreakPlayer2;
         return { gamesPlayer1: a, gamesPlayer2: b, tiebreakPlayer1: tb1, tiebreakPlayer2: tb2 };
       })
       .filter((s) => s != null && (s.gamesPlayer1 > 0 || s.gamesPlayer2 > 0));
-  }, [resultSets]);
+  }, [resultSets, data?.tournament]);
 
   const formatSetsToScoreString = useCallback((validSets) => {
     return validSets
@@ -387,7 +402,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
     if (!rows.length) return 'Retired';
     const str = rows
       .map((s) => {
-        if (setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2)) {
+        if (setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2, tournamentScoringOptions(data?.tournament))) {
           const tb1 = s.tiebreakPlayer1 != null && s.tiebreakPlayer1 !== '' ? String(s.tiebreakPlayer1) : '';
           const tb2 = s.tiebreakPlayer2 != null && s.tiebreakPlayer2 !== '' ? String(s.tiebreakPlayer2) : '';
           return `${s.gamesPlayer1}-${s.gamesPlayer2}(${tb1}-${tb2})`;
@@ -396,11 +411,13 @@ function TournamentDetailScreenInner({ route, navigation }) {
       })
       .join(' - ');
     return `${str} (ret.)`;
-  }, []);
+  }, [data?.tournament]);
 
   const saveMatchResult = useCallback(async () => {
     const match = matchResultModalMatch;
     if (!match) return;
+    const scoringOpts = tournamentScoringOptions(data?.tournament);
+    const maxGames = scoringOpts.setGameTarget === 4 ? 4 : 7;
 
     if (resultMode === 'conceded') {
       if (!concededWinnerId) {
@@ -411,12 +428,12 @@ function TournamentDetailScreenInner({ route, navigation }) {
       for (const s of retireRows) {
         const tb1 = s.tiebreakPlayer1 != null && s.tiebreakPlayer1 !== '' ? String(s.tiebreakPlayer1) : undefined;
         const tb2 = s.tiebreakPlayer2 != null && s.tiebreakPlayer2 !== '' ? String(s.tiebreakPlayer2) : undefined;
-        if (!isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, tb1, tb2)) {
+        if (!isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, tb1, tb2, scoringOpts)) {
           Alert.alert(
             'Invalid set score',
-            setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2)
+            setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2, scoringOpts)
               ? 'Set 7–6 or 6–7 requires a tiebreak score (e.g. 7–4).'
-              : 'Enter games 0–7 per row, or leave rows empty for a walkover with no play.'
+              : `Enter games 0-${maxGames} per row, or leave rows empty for a walkover with no play.`
           );
           return;
         }
@@ -443,24 +460,31 @@ function TournamentDetailScreenInner({ route, navigation }) {
 
     const validSets = getValidResultSets();
     if (validSets.length === 0) {
-      Alert.alert('Add at least one set', 'Games must be 0–7. For 7–6 or 6–7 add tiebreak score.');
+      Alert.alert('Add at least one set', `Games must be 0-${maxGames}. Deciding game sets require a 7-point tiebreak score.`);
       return;
     }
     for (let i = 0; i < validSets.length; i++) {
       const s = validSets[i];
       const tb1 = s.tiebreakPlayer1 != null && s.tiebreakPlayer1 !== '' ? String(s.tiebreakPlayer1) : undefined;
       const tb2 = s.tiebreakPlayer2 != null && s.tiebreakPlayer2 !== '' ? String(s.tiebreakPlayer2) : undefined;
-      if (!isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, tb1, tb2)) {
+      if (!isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, tb1, tb2, scoringOpts)) {
         Alert.alert(
           'Invalid set score',
-          setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2)
+          setNeedsTiebreak(s.gamesPlayer1, s.gamesPlayer2, scoringOpts)
             ? 'Set 7–6 or 6–7 requires a tiebreak score (e.g. 7–4).'
-            : 'Use valid tennis set scores: 6–0 to 7–5, or 7–6/6–7 with tiebreak.'
+            : scoringOpts.setGameTarget === 4
+              ? 'Use valid short-set scores: 4-0 to 4-2, or 4-3/3-4 with tiebreak.'
+              : 'Use valid full-set scores: 6-0 to 7-5, or 7-6/6-7 with tiebreak.'
         );
         return;
       }
     }
-    const winnerId = inferMatchWinnerParticipantFromSetRows(resultSets, match.player1_participant_id, match.player2_participant_id);
+    const winnerId = inferMatchWinnerParticipantFromSetRows(
+      resultSets,
+      match.player1_participant_id,
+      match.player2_participant_id,
+      scoringOpts
+    );
     if (winnerId == null) {
       Alert.alert(
         'Incomplete score',
@@ -493,6 +517,7 @@ function TournamentDetailScreenInner({ route, navigation }) {
     formatRetirementScoreString,
     load,
     closeResultModal,
+    data?.tournament,
   ]);
 
   const inferredWinnerId = useMemo(
@@ -501,10 +526,11 @@ function TournamentDetailScreenInner({ route, navigation }) {
         ? inferMatchWinnerParticipantFromSetRows(
             resultSets,
             matchResultModalMatch.player1_participant_id,
-            matchResultModalMatch.player2_participant_id
+            matchResultModalMatch.player2_participant_id,
+            tournamentScoringOptions(data?.tournament)
           )
         : null,
-    [matchResultModalMatch, resultSets]
+    [matchResultModalMatch, resultSets, data?.tournament]
   );
 
   const inferredWinnerName = useMemo(() => {
@@ -535,11 +561,17 @@ function TournamentDetailScreenInner({ route, navigation }) {
       const rows = collectRetirementRowsFromForm(resultSets);
       if (rows.length === 0) return true;
       return rows.every((s) =>
-        isSetValidForSave(s.gamesPlayer1, s.gamesPlayer2, s.tiebreakPlayer1, s.tiebreakPlayer2)
+        isSetValidForSave(
+          s.gamesPlayer1,
+          s.gamesPlayer2,
+          s.tiebreakPlayer1,
+          s.tiebreakPlayer2,
+          tournamentScoringOptions(data?.tournament)
+        )
       );
     }
     return inferredWinnerId != null;
-  }, [matchResultModalMatch, resultMode, concededWinnerId, resultSets, inferredWinnerId]);
+  }, [matchResultModalMatch, resultMode, concededWinnerId, resultSets, inferredWinnerId, data?.tournament]);
 
   const handleAddToMatches = useCallback(
     async (match) => {
@@ -979,7 +1011,9 @@ function TournamentDetailScreenInner({ route, navigation }) {
                     <>
                   <View style={styles.resultSetHeader}>
                     <Text style={styles.inputLabel}>
-                      {resultMode === 'conceded' ? 'Score when stopped (optional)' : 'Set scores (games 0–7)'}
+                      {resultMode === 'conceded'
+                        ? 'Score when stopped (optional)'
+                        : `Set scores (games 0-${tournamentScoringOptions(data?.tournament).setGameTarget === 4 ? 4 : 7})`}
                     </Text>
                     <TouchableOpacity onPress={addResultSet} style={styles.addSetLink}>
                       <Text style={styles.addSetLinkText}>+ Add set</Text>
@@ -993,7 +1027,10 @@ function TournamentDetailScreenInner({ route, navigation }) {
                   {resultSets.map((set, i) => {
                     const g1 = set.gamesPlayer1 === '' ? null : parseInt(set.gamesPlayer1, 10);
                     const g2 = set.gamesPlayer2 === '' ? null : parseInt(set.gamesPlayer2, 10);
-                    const needsTiebreak = Number.isInteger(g1) && Number.isInteger(g2) && setNeedsTiebreak(g1, g2);
+                    const needsTiebreak =
+                      Number.isInteger(g1) &&
+                      Number.isInteger(g2) &&
+                      setNeedsTiebreak(g1, g2, tournamentScoringOptions(data?.tournament));
                     const p1Name = matchResultModalMatch.player1_name || 'P1';
                     const p2Name = matchResultModalMatch.player2_name || 'P2';
                     return (

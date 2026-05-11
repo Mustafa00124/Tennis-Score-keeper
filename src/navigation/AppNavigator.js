@@ -31,7 +31,7 @@ function HeaderTitleWithIcon() {
   return (
     <View style={styles.headerTitleWrap}>
       <Image source={require('../../media/App-Icon.jpg')} style={styles.headerIcon} />
-      <Text style={styles.headerTitleText}>Pocket Tour</Text>
+      <Text style={styles.headerTitleText}>Pocket Tour 2</Text>
     </View>
   );
 }

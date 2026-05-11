@@ -518,9 +518,9 @@ function MatchRow({ match, detail, onPress, onDelete }) {
 }
 
 function StatTableRow({ metric, value, valueP1, valueP2, valueScore, fallback }) {
-  const parsed = valueScore != null ? valueScore.split(/\s*[–-]\s*/) : [];
-  const p1 = valueP1 ?? (parsed[0] != null && parsed[0].trim() !== '' ? parsed[0].trim() : null);
-  const p2 = valueP2 ?? (parsed[1] != null && parsed[1].trim() !== '' ? parsed[1].trim() : null);
+  const parsed = valueScore != null ? String(valueScore).match(/^(.+?)\s*[\u2013-]\s*(.+)$/) : null;
+  const p1 = valueP1 ?? (parsed?.[1] != null && parsed[1].trim() !== '' ? parsed[1].trim() : null);
+  const p2 = valueP2 ?? (parsed?.[2] != null && parsed[2].trim() !== '' ? parsed[2].trim() : null);
   const hasAnyP1P2 = p1 != null || p2 != null;
   const displayNeutral = !hasAnyP1P2 ? (value ?? fallback ?? '—') : null;
   return (
@@ -684,12 +684,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.06)',
   },
-  tableMetric: { flex: 1, fontSize: 14, fontWeight: '700', color: '#1a472a' },
-  tableValueWrap: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
-  tableValueP1: { fontSize: 14, fontWeight: '600' },
+  tableMetric: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: '700', color: '#1a472a' },
+  tableValueWrap: {
+    flex: 1.15,
+    minWidth: 0,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  tableValueP1: { minWidth: 0, flexShrink: 1, fontSize: 14, fontWeight: '600', textAlign: 'right' },
   tableValueDash: { fontSize: 14, fontWeight: '600', color: '#555' },
-  tableValueP2: { fontSize: 14, fontWeight: '600' },
-  tableValueNeutral: { fontSize: 14, fontWeight: '600', color: COLOR_NEUTRAL },
+  tableValueP2: { minWidth: 0, flexShrink: 1, fontSize: 14, fontWeight: '600' },
+  tableValueNeutral: { minWidth: 0, flexShrink: 1, fontSize: 14, fontWeight: '600', color: COLOR_NEUTRAL, textAlign: 'right' },
   graphContent: { padding: 16, paddingBottom: 40 },
   legendPlayer1: { fontSize: 13, color: COLOR_PLAYER1, fontWeight: '600' },
   legendPlayer2: { fontSize: 13, color: COLOR_PLAYER2, fontWeight: '600' },
